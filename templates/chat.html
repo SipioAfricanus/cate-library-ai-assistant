@@ -304,13 +304,60 @@
     }
     const visitorId = getVisitorId();
 
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    // Bot answers come from an LLM and may contain **bold** markdown; render it as real
+    // bold instead of literal asterisks. Escapes HTML first so model output can't inject tags.
+    function formatBotText(text) {
+      return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    }
+
     function addMessage(text, role) {
       const el = document.createElement('div');
       el.className = `msg ${role}`;
-      el.textContent = text;
+      if (role === 'bot') {
+        el.innerHTML = formatBotText(text);
+      } else {
+        el.textContent = text;
+      }
       messagesEl.appendChild(el);
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return el;
+    }
+
+    // Renders a row of Yes/No-style buttons when Dify pauses on a Human Input node.
+    function renderActionButtons(actions, formToken, messageId) {
+      const row = document.createElement('div');
+      row.className = 'suggestions';
+      actions.forEach((action) => {
+        const btn = document.createElement('div');
+        btn.className = 'chip';
+        btn.textContent = action.title;
+        btn.addEventListener('click', () => {
+          addMessage(action.title, 'user');
+          row.remove();
+          submitHumanInput(formToken, action.id, messageId);
+        });
+        row.appendChild(btn);
+      });
+      messagesEl.appendChild(row);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    // Renders whatever the backend returned: a plain answer, or a question + action buttons.
+    function renderResponse(data) {
+      conversationId = data.conversation_id || conversationId;
+      if (data.requires_action) {
+        addMessage(data.question || 'Please choose an option:', 'bot');
+        renderActionButtons(data.actions || [], data.form_token, data.message_id);
+      } else {
+        addMessage(data.answer || '(no response)', 'bot');
+      }
     }
 
     async function sendMessage(message) {
@@ -332,8 +379,7 @@
         if (!res.ok) {
           addMessage(data.error || 'Something went wrong.', 'error');
         } else {
-          conversationId = data.conversation_id || conversationId;
-          addMessage(data.answer || '(no response)', 'bot');
+          renderResponse(data);
         }
       } catch (err) {
         typingEl.remove();
@@ -341,6 +387,35 @@
       } finally {
         sendBtn.disabled = false;
         input.focus();
+      }
+    }
+
+    // Submits the user's chosen Human Input action (e.g. "yes"/"no") and renders the result.
+    async function submitHumanInput(formToken, actionId, messageId) {
+      const typingEl = addMessage('Thinking...', 'typing');
+      try {
+        const res = await fetch('/human-input-submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            form_token: formToken,
+            action_id: actionId,
+            message_id: messageId,
+            conversation_id: conversationId,
+            visitor_id: visitorId,
+          }),
+        });
+        const data = await res.json();
+        typingEl.remove();
+
+        if (!res.ok) {
+          addMessage(data.error || 'Something went wrong.', 'error');
+        } else {
+          renderResponse(data);
+        }
+      } catch (err) {
+        typingEl.remove();
+        addMessage('Could not reach the server: ' + err.message, 'error');
       }
     }
 

@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import time
@@ -45,6 +46,68 @@ def _visitor_user_id(body: dict) -> str:
     return f"web-{uuid.uuid4()}"
 
 
+def _drain_dify_stream(resp) -> dict:
+    answer = ""
+    conversation_id = ""
+    message_id = ""
+    for raw_line in resp.iter_lines():
+        if not raw_line:
+            continue
+        line = raw_line.decode("utf-8")
+        if not line.startswith("data:"):
+            continue
+        payload = line[len("data:"):].strip()
+        if not payload:
+            continue
+        event = json.loads(payload)
+        conversation_id = event.get("conversation_id", conversation_id)
+        message_id = event.get("message_id", message_id)
+        event_type = event.get("event")
+
+        if event_type == "message":
+            answer += event.get("answer", "")
+        elif event_type == "human_input_required":
+            data = event.get("data", {})
+            return {
+                "requires_action": True,
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "form_token": data.get("form_token", ""),
+                "question": data.get("form_content", ""),
+                "actions": [
+                    {"id": a.get("id"), "title": a.get("title")}
+                    for a in data.get("actions", [])
+                ],
+            }
+        elif event_type == "message_end":
+            break
+        elif event_type == "error":
+            raise RuntimeError(event.get("message", "Dify workflow error"))
+
+    return {"answer": answer, "conversation_id": conversation_id}
+
+
+def _poll_for_answer(conversation_id: str, message_id: str, user: str, attempts: int = 10, delay: float = 1.0):
+    for attempt in range(attempts):
+        if attempt > 0:
+            time.sleep(delay)
+        try:
+            resp = requests.get(
+                f"{DIFY_BASE_URL}/messages",
+                headers={"Authorization": f"Bearer {DIFY_CHATFLOW_API_KEY}"},
+                params={"conversation_id": conversation_id, "user": user},
+                timeout=15,
+            )
+        except requests.RequestException:
+            continue
+        if resp.status_code != 200:
+            continue
+        for msg in resp.json().get("data", []):
+            if msg.get("id") == message_id and msg.get("answer"):
+                return msg["answer"]
+    return None
+
+
 @app.route("/")
 def chat():
     return render_template("chat.html")
@@ -77,11 +140,12 @@ def chat_message():
             json={
                 "inputs": {},
                 "query": message,
-                "response_mode": "blocking",
+                "response_mode": "streaming",
                 "conversation_id": conversation_id,
                 "user": _visitor_user_id(body),
             },
             timeout=120,
+            stream=True,
         )
     except requests.RequestException as exc:
         print(f"[chat-message] Dify request failed: {exc}")
@@ -91,11 +155,61 @@ def chat_message():
         print(f"[chat-message] Dify returned {resp.status_code}: {resp.text}")
         return jsonify({"error": "The assistant had trouble answering that. Please try again."}), 502
 
-    data = resp.json()
-    return jsonify({
-        "answer": data.get("answer", ""),
-        "conversation_id": data.get("conversation_id", conversation_id),
-    })
+    try:
+        result = _drain_dify_stream(resp)
+    except RuntimeError as exc:
+        print(f"[chat-message] Dify workflow error: {exc}")
+        return jsonify({"error": "The assistant had trouble answering that. Please try again."}), 502
+
+    result.setdefault("conversation_id", conversation_id)
+    return jsonify(result)
+
+
+@app.route("/human-input-submit", methods=["POST"])
+def human_input_submit():
+    if _rate_limited(request.remote_addr or "unknown"):
+        return jsonify({"error": "Too many requests. Please slow down and try again shortly."}), 429
+
+    body = request.json or {}
+    form_token = (body.get("form_token") or "").strip()
+    action_id = (body.get("action_id") or "").strip()
+    message_id = (body.get("message_id") or "").strip()
+    conversation_id = (body.get("conversation_id") or "").strip()
+
+    if not form_token or not action_id or not message_id:
+        return jsonify({"error": "Missing form_token, action_id, or message_id."}), 400
+
+    if not DIFY_CHATFLOW_API_KEY:
+        return jsonify({"error": "Server is missing DIFY_CHATFLOW_API_KEY. Set it in .env and restart."}), 500
+
+    user = _visitor_user_id(body)
+
+    try:
+        resp = requests.post(
+            f"{DIFY_BASE_URL}/form/human_input/{form_token}",
+            headers={
+                "Authorization": f"Bearer {DIFY_CHATFLOW_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={"action": action_id, "inputs": {}, "user": user},
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        print(f"[human-input-submit] Dify submit failed: {exc}")
+        return jsonify({"error": "Could not submit your response right now. Please try again."}), 502
+
+    if resp.status_code != 200:
+        print(f"[human-input-submit] Dify submit returned {resp.status_code}: {resp.text}")
+        return jsonify({"error": "Could not submit your response right now. Please try again."}), 502
+
+    answer = _poll_for_answer(conversation_id, message_id, user)
+    if answer is None:
+        return jsonify({
+            "error": "Your response was recorded, but the assistant is taking longer than "
+                     "expected. Please check back in a moment."
+        }), 504
+
+    return jsonify({"answer": answer, "conversation_id": conversation_id})
 
 
 @app.route("/clear-conversation", methods=["POST"])
