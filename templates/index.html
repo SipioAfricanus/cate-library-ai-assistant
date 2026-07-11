@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Library Project</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 640px;
+      margin: 60px auto;
+      padding: 0 20px;
+      color: #222;
+    }
+    h1 { font-size: 1.4rem; }
+    form { display: flex; gap: 8px; margin-top: 24px; }
+    input[type="text"] {
+      flex: 1;
+      padding: 10px 12px;
+      font-size: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+    button {
+      padding: 10px 18px;
+      font-size: 1rem;
+      border: none;
+      border-radius: 6px;
+      background: #4f46e5;
+      color: white;
+      cursor: pointer;
+    }
+    button:disabled { background: #a5a5a5; cursor: default; }
+    #result {
+      margin-top: 24px;
+      padding: 16px;
+      border-radius: 8px;
+      background: #f5f5f7;
+      white-space: pre-wrap;
+      min-height: 1.5em;
+    }
+    #result.error { background: #fdecea; color: #b3261e; }
+  </style>
+</head>
+<body>
+  <h1>Library Project</h1>
+  <form id="query-form">
+    <input type="text" id="query-input" placeholder="Ask something..." autofocus required>
+    <button type="submit" id="submit-btn">Search</button>
+  </form>
+  <div id="result"></div>
+
+  <script>
+    const form = document.getElementById('query-form');
+    const input = document.getElementById('query-input');
+    const button = document.getElementById('submit-btn');
+    const result = document.getElementById('result');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const query = input.value.trim();
+      if (!query) return;
+
+      button.disabled = true;
+      button.textContent = 'Searching...';
+      result.classList.remove('error');
+      result.textContent = '';
+
+      try {
+        const res = await fetch('/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          result.classList.add('error');
+          result.textContent = data.error || 'Something went wrong.';
+        } else {
+          result.textContent = data.result ?? JSON.stringify(data.raw, null, 2);
+        }
+      } catch (err) {
+        result.classList.add('error');
+        result.textContent = 'Could not reach the server: ' + err.message;
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Search';
+      }
+    });
+  </script>
+</body>
+</html>
