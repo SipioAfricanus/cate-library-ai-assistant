@@ -12,8 +12,12 @@ load_dotenv()
 
 DIFY_BASE_URL = os.environ.get("DIFY_BASE_URL", "http://localhost/v1")
 DIFY_CHATFLOW_API_KEY = os.environ.get("DIFY_CHATFLOW_API_KEY", "")
+BOOK_REQUEST_SECRET = os.environ.get("BOOK_REQUEST_SECRET", "")
+APPS_SCRIPT_URL = os.environ.get("APPS_SCRIPT_URL", "")
+APPS_SCRIPT_TOKEN = os.environ.get("APPS_SCRIPT_TOKEN", "")
 
 MAX_MESSAGE_LENGTH = 2000
+MAX_BOOK_FIELD_LENGTH = 500
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_MAX_REQUESTS = 20
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -123,6 +127,50 @@ def clear_conversation():
         return jsonify({"error": "Could not clear the conversation. Please try again."}), 502
 
     return jsonify({"cleared": True})
+
+
+@app.route("/api/book-requests", methods=["POST"])
+def book_requests():
+    if not BOOK_REQUEST_SECRET or request.headers.get("X-API-Key") != BOOK_REQUEST_SECRET:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    if _rate_limited(request.remote_addr or "unknown"):
+        return jsonify({"error": "Too many requests. Please slow down and try again shortly."}), 429
+
+    body = request.json or {}
+    title = (body.get("requested_title") or "").strip()
+    author = (body.get("requested_author") or "").strip()
+    original_request = (body.get("student_query") or "").strip()
+
+    if not title:
+        return jsonify({"error": "Missing book title."}), 400
+    if any(len(field) > MAX_BOOK_FIELD_LENGTH for field in (title, author, original_request)):
+        return jsonify({"error": f"Field too long (max {MAX_BOOK_FIELD_LENGTH} characters)."}), 400
+
+    if not APPS_SCRIPT_URL:
+        return jsonify({"error": "Server is missing APPS_SCRIPT_URL. Set it in .env and restart."}), 500
+
+    try:
+        resp = requests.post(
+            APPS_SCRIPT_URL,
+            json={
+                "token": APPS_SCRIPT_TOKEN,
+                "title": title,
+                "author": author,
+                "original_request": original_request,
+            },
+            timeout=30,
+        )
+        ok = resp.status_code == 200 and (resp.json() or {}).get("ok") is True
+    except (requests.RequestException, ValueError) as exc:
+        print(f"[book-requests] Apps Script call failed: {exc}")
+        return jsonify({"error": "Could not save the request right now. Please try again."}), 502
+
+    if not ok:
+        print(f"[book-requests] Apps Script rejected: {resp.status_code} {resp.text}")
+        return jsonify({"error": "Could not save the request right now. Please try again."}), 502
+
+    return jsonify({"stored": True})
 
 
 if __name__ == "__main__":
