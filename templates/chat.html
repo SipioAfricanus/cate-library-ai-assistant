@@ -271,6 +271,16 @@
 
     let conversationId = '';
 
+    function getVisitorId() {
+      let id = localStorage.getItem('visitor_id');
+      if (!id) {
+        id = crypto.randomUUID();
+        localStorage.setItem('visitor_id', id);
+      }
+      return id;
+    }
+    const visitorId = getVisitorId();
+
     function addMessage(text, role) {
       const el = document.createElement('div');
       el.className = `msg ${role}`;
@@ -291,7 +301,7 @@
         const res = await fetch('/chat-message', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message, conversation_id: conversationId }),
+          body: JSON.stringify({ message, conversation_id: conversationId, visitor_id: visitorId }),
         });
         const data = await res.json();
         typingEl.remove();
@@ -330,7 +340,7 @@
         await fetch('/clear-conversation', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ conversation_id: conversationId }),
+          body: JSON.stringify({ conversation_id: conversationId, visitor_id: visitorId }),
         });
       } catch (err) {
         // Ignore network errors here; we still reset the local view below.

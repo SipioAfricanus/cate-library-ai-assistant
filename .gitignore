@@ -4,3 +4,5 @@ venv/
 server.log
 .DS_Store
 *.pyc
+.vercel
+.env*
