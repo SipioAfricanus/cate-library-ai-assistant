@@ -232,12 +232,7 @@
         Hi, I'm the <strong>Cate Library AI Assistant</strong>. Tell me a topic, subject, or genre and I'll
         help you find a book &mdash; from the library's collection or beyond.
       </div>
-      <div class="suggestions" id="suggestions">
-        <div class="chip">Recommend a book on climate science</div>
-        <div class="chip">Help me find sources for a history paper</div>
-        <div class="chip">I liked Atomic Habits, what should I read next?</div>
-        <div class="chip">Find me a good sci-fi novel</div>
-      </div>
+      <div class="suggestions" id="suggestions"></div>
     </div>
 
     <div id="input-bar">
@@ -270,6 +265,34 @@
     const suggestionsEl = document.getElementById('suggestions');
 
     let conversationId = '';
+
+    const SUGGESTION_POOL = [
+      'Recommend a book on climate science',
+      'Help me find sources for a history paper',
+      'I liked Atomic Habits, what should I read next?',
+      'Find me a good sci-fi novel',
+      'What\'s a good mystery novel with a twist ending?',
+      'Recommend a biography about a scientist',
+      'I need a classic novel for my English class',
+      'Suggest a graphic novel for a beginner',
+      'What should I read if I liked The Hunger Games?',
+      'Find me a book on World War II history',
+      'Recommend something short I can finish in a weekend',
+      'Suggest a poetry collection',
+    ];
+
+    function renderSuggestions() {
+      if (!suggestionsEl) return;
+      const shuffled = [...SUGGESTION_POOL].sort(() => Math.random() - 0.5);
+      suggestionsEl.innerHTML = '';
+      shuffled.slice(0, 4).forEach((text) => {
+        const chip = document.createElement('div');
+        chip.className = 'chip';
+        chip.textContent = text;
+        chip.addEventListener('click', () => sendMessage(text));
+        suggestionsEl.appendChild(chip);
+      });
+    }
 
     function getVisitorId() {
       let id = localStorage.getItem('visitor_id');
@@ -329,9 +352,7 @@
       sendMessage(message);
     });
 
-    document.querySelectorAll('.chip').forEach((el) => {
-      el.addEventListener('click', () => sendMessage(el.textContent));
-    });
+    renderSuggestions();
 
     clearBtn.addEventListener('click', async () => {
       clearBtn.disabled = true;
