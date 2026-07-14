@@ -7,7 +7,7 @@ from collections import defaultdict, deque
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 load_dotenv()
 
@@ -111,6 +111,16 @@ def _poll_for_answer(conversation_id: str, message_id: str, user: str, attempts:
             if msg.get("id") == message_id and msg.get("answer"):
                 return msg["answer"]
     return None
+
+
+@app.route("/stream-test")
+def stream_test():
+    def generate():
+        for i in range(5):
+            yield f"data: chunk {i} at {time.time()}\n\n"
+            time.sleep(2)
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream")
 
 
 @app.route("/")
