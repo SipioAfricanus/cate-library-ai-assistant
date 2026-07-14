@@ -331,7 +331,7 @@
     }
 
     // Renders a row of Yes/No-style buttons when Dify pauses on a Human Input node.
-    function renderActionButtons(actions, formToken, messageId) {
+    function renderActionButtons(actions, formToken, messageId, priorAnswer) {
       const row = document.createElement('div');
       row.className = 'suggestions';
       actions.forEach((action) => {
@@ -341,7 +341,7 @@
         btn.addEventListener('click', () => {
           addMessage(action.title, 'user');
           row.remove();
-          submitHumanInput(formToken, action.id, messageId);
+          submitHumanInput(formToken, action.id, messageId, priorAnswer);
         });
         row.appendChild(btn);
       });
@@ -349,12 +349,14 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
-    // Renders whatever the backend returned: a plain answer, or a question + action buttons.
+    // Renders whatever the backend returned: a plain answer, or an answer-so-far plus a
+    // question + action buttons when Dify has paused on a Human Input node.
     function renderResponse(data) {
       conversationId = data.conversation_id || conversationId;
       if (data.requires_action) {
+        if (data.answer) addMessage(data.answer, 'bot');
         addMessage(data.question || 'Please choose an option:', 'bot');
-        renderActionButtons(data.actions || [], data.form_token, data.message_id);
+        renderActionButtons(data.actions || [], data.form_token, data.message_id, data.answer || '');
       } else {
         addMessage(data.answer || '(no response)', 'bot');
       }
@@ -391,7 +393,7 @@
     }
 
     // Submits the user's chosen Human Input action (e.g. "yes"/"no") and renders the result.
-    async function submitHumanInput(formToken, actionId, messageId) {
+    async function submitHumanInput(formToken, actionId, messageId, priorAnswer) {
       const typingEl = addMessage('Thinking...', 'typing');
       try {
         const res = await fetch('/human-input-submit', {
@@ -403,6 +405,7 @@
             message_id: messageId,
             conversation_id: conversationId,
             visitor_id: visitorId,
+            prior_answer: priorAnswer,
           }),
         });
         const data = await res.json();

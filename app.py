@@ -22,6 +22,10 @@ MAX_BOOK_FIELD_LENGTH = 500
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_MAX_REQUESTS = 20
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_DEFAULT_CONFIRMATIONS = {
+    "yes": "Got it — I've noted this for the librarian to consider purchasing.",
+    "no": "No problem! Let me know if you'd like help finding something else.",
+}
 
 app = Flask(__name__)
 
@@ -72,6 +76,7 @@ def _drain_dify_stream(resp) -> dict:
                 "requires_action": True,
                 "conversation_id": conversation_id,
                 "message_id": message_id,
+                "answer": answer,
                 "form_token": data.get("form_token", ""),
                 "question": data.get("form_content", ""),
                 "actions": [
@@ -175,6 +180,7 @@ def human_input_submit():
     action_id = (body.get("action_id") or "").strip()
     message_id = (body.get("message_id") or "").strip()
     conversation_id = (body.get("conversation_id") or "").strip()
+    prior_answer = body.get("prior_answer") or ""
 
     if not form_token or not action_id or not message_id:
         return jsonify({"error": "Missing form_token, action_id, or message_id."}), 400
@@ -209,7 +215,20 @@ def human_input_submit():
                      "expected. Please check back in a moment."
         }), 504
 
-    return jsonify({"answer": answer, "conversation_id": conversation_id})
+    # Dify's persisted answer is often identical to what was already shown before the pause
+    # (no separate confirmation text gets appended after resuming). Only surface genuinely
+    # new content; otherwise fall back to a short canned confirmation instead of a duplicate.
+    if prior_answer and answer.startswith(prior_answer):
+        new_text = answer[len(prior_answer):].strip()
+    elif answer == prior_answer:
+        new_text = ""
+    else:
+        new_text = answer
+
+    if not new_text:
+        new_text = _DEFAULT_CONFIRMATIONS.get(action_id, "Thanks for letting me know!")
+
+    return jsonify({"answer": new_text, "conversation_id": conversation_id})
 
 
 @app.route("/clear-conversation", methods=["POST"])
