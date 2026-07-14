@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cate Library AI Assistant</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "{{ url_for('static', filename='vendor/three/three.module.js') }}",
+    "three/addons/controls/OrbitControls.js": "{{ url_for('static', filename='vendor/three/OrbitControls.js') }}"
+  }
+}
+</script>
 <style>
   :root {
     --navy: #2667a5;
@@ -205,6 +213,52 @@
   #side .card {
     margin-bottom: 26px;
   }
+  #ram-stage {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    max-height: 300px;
+    margin-bottom: 22px;
+    border: 1px solid #dbe3f0;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #f3f8ff 0%, #e3ecfa 100%);
+    overflow: hidden;
+  }
+  #ram-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: grab;
+  }
+  #ram-canvas:active { cursor: grabbing; }
+  #ram-hint {
+    position: absolute;
+    left: 10px;
+    bottom: 8px;
+    font-size: 0.68rem;
+    color: var(--muted);
+    opacity: 0.7;
+    pointer-events: none;
+    user-select: none;
+  }
+  #sound-toggle {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid #c7d3ea;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.85);
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #sound-toggle:hover { background: #eaf0fa; border-color: var(--accent); }
   #side p {
     font-size: 0.85rem;
     line-height: 1.5;
@@ -245,6 +299,11 @@
   </div>
 
   <div id="side">
+    <div id="ram-stage">
+      <canvas id="ram-canvas"></canvas>
+      <button id="sound-toggle" type="button" title="Toggle ram sounds" aria-label="Toggle ram sounds">🔇</button>
+      <div id="ram-hint">drag to rotate</div>
+    </div>
     <div class="card">
       <h2>About This Chatbot</h2>
       <p>
@@ -376,6 +435,7 @@
       if (suggestionsEl) suggestionsEl.remove();
 
       const typingEl = addMessage('Thinking...', 'typing');
+      window.ramMascot?.setTalking(true);
 
       try {
         const res = await fetch('/chat-message', {
@@ -422,6 +482,7 @@
         typingEl.remove();
         addMessage('Could not reach the server: ' + err.message, 'error');
       } finally {
+        window.ramMascot?.setTalking(false);
         sendBtn.disabled = false;
         input.focus();
       }
@@ -430,6 +491,7 @@
     // Submits the user's chosen Human Input action (e.g. "yes"/"no") and renders the result.
     async function submitHumanInput(formToken, actionId, messageId, priorAnswer) {
       const typingEl = addMessage('Thinking...', 'typing');
+      window.ramMascot?.setTalking(true);
       try {
         const res = await fetch('/human-input-submit', {
           method: 'POST',
@@ -454,6 +516,8 @@
       } catch (err) {
         typingEl.remove();
         addMessage('Could not reach the server: ' + err.message, 'error');
+      } finally {
+        window.ramMascot?.setTalking(false);
       }
     }
 
@@ -483,5 +547,6 @@
       location.reload();
     });
   </script>
+  <script type="module" src="{{ url_for('static', filename='ram.js') }}"></script>
 </body>
 </html>
