@@ -362,6 +362,14 @@
       }
     }
 
+    // Parses one SSE frame ("event: x\ndata: {...}") into { eventType, data }, or null.
+    function parseSseFrame(frame) {
+      const eventMatch = frame.match(/^event: (.+)$/m);
+      const dataMatch = frame.match(/^data: (.+)$/m);
+      if (!dataMatch) return null;
+      return { eventType: eventMatch ? eventMatch[1] : 'message', data: JSON.parse(dataMatch[1]) };
+    }
+
     async function sendMessage(message) {
       addMessage(message, 'user');
       sendBtn.disabled = true;
@@ -375,13 +383,40 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message, conversation_id: conversationId, visitor_id: visitorId }),
         });
-        const data = await res.json();
-        typingEl.remove();
 
         if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          typingEl.remove();
           addMessage(data.error || 'Something went wrong.', 'error');
-        } else {
-          renderResponse(data);
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let frameEnd;
+          while ((frameEnd = buffer.indexOf('\n\n')) !== -1) {
+            const frame = buffer.slice(0, frameEnd);
+            buffer = buffer.slice(frameEnd + 2);
+            const parsed = parseSseFrame(frame);
+            if (!parsed) continue;
+
+            if (parsed.eventType === 'status') {
+              typingEl.textContent = parsed.data.message;
+            } else if (parsed.eventType === 'done') {
+              typingEl.remove();
+              renderResponse(parsed.data);
+            } else if (parsed.eventType === 'error') {
+              typingEl.remove();
+              addMessage(parsed.data.error || 'Something went wrong.', 'error');
+            }
+          }
         }
       } catch (err) {
         typingEl.remove();

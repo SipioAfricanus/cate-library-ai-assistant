@@ -26,6 +26,12 @@ _DEFAULT_CONFIRMATIONS = {
     "yes": "Got it — I've noted this for the librarian to consider purchasing.",
     "no": "No problem! Let me know if you'd like help finding something else.",
 }
+NODE_STATUS_LABELS = {
+    "knowledge-retrieval": "Searching the library catalog...",
+    "tool": "Searching the web...",
+    "question-classifier": "Understanding your question...",
+    "llm": "Thinking...",
+}
 
 app = Flask(__name__)
 
@@ -50,10 +56,11 @@ def _visitor_user_id(body: dict) -> str:
     return f"web-{uuid.uuid4()}"
 
 
-def _drain_dify_stream(resp) -> dict:
+def _stream_chat_events(resp, conversation_id: str):
     answer = ""
-    conversation_id = ""
     message_id = ""
+    last_status = None
+
     for raw_line in resp.iter_lines():
         if not raw_line:
             continue
@@ -68,11 +75,17 @@ def _drain_dify_stream(resp) -> dict:
         message_id = event.get("message_id", message_id)
         event_type = event.get("event")
 
-        if event_type == "message":
+        if event_type == "node_started":
+            node_type = (event.get("data") or {}).get("node_type")
+            label = NODE_STATUS_LABELS.get(node_type)
+            if label and label != last_status:
+                last_status = label
+                yield f"event: status\ndata: {json.dumps({'message': label})}\n\n"
+        elif event_type == "message":
             answer += event.get("answer", "")
         elif event_type == "human_input_required":
             data = event.get("data", {})
-            return {
+            result = {
                 "requires_action": True,
                 "conversation_id": conversation_id,
                 "message_id": message_id,
@@ -84,12 +97,17 @@ def _drain_dify_stream(resp) -> dict:
                     for a in data.get("actions", [])
                 ],
             }
+            yield f"event: done\ndata: {json.dumps(result)}\n\n"
+            return
         elif event_type == "message_end":
             break
         elif event_type == "error":
-            raise RuntimeError(event.get("message", "Dify workflow error"))
+            message = event.get("message", "Dify workflow error")
+            yield f"event: error\ndata: {json.dumps({'error': message})}\n\n"
+            return
 
-    return {"answer": answer, "conversation_id": conversation_id}
+    result = {"answer": answer, "conversation_id": conversation_id}
+    yield f"event: done\ndata: {json.dumps(result)}\n\n"
 
 
 def _poll_for_answer(conversation_id: str, message_id: str, user: str, attempts: int = 10, delay: float = 1.0):
@@ -111,16 +129,6 @@ def _poll_for_answer(conversation_id: str, message_id: str, user: str, attempts:
             if msg.get("id") == message_id and msg.get("answer"):
                 return msg["answer"]
     return None
-
-
-@app.route("/stream-test")
-def stream_test():
-    def generate():
-        for i in range(5):
-            yield f"data: chunk {i} at {time.time()}\n\n"
-            time.sleep(2)
-
-    return Response(stream_with_context(generate()), mimetype="text/event-stream")
 
 
 @app.route("/")
@@ -170,14 +178,10 @@ def chat_message():
         print(f"[chat-message] Dify returned {resp.status_code}: {resp.text}")
         return jsonify({"error": "The assistant had trouble answering that. Please try again."}), 502
 
-    try:
-        result = _drain_dify_stream(resp)
-    except RuntimeError as exc:
-        print(f"[chat-message] Dify workflow error: {exc}")
-        return jsonify({"error": "The assistant had trouble answering that. Please try again."}), 502
-
-    result.setdefault("conversation_id", conversation_id)
-    return jsonify(result)
+    return Response(
+        stream_with_context(_stream_chat_events(resp, conversation_id)),
+        mimetype="text/event-stream",
+    )
 
 
 @app.route("/human-input-submit", methods=["POST"])
