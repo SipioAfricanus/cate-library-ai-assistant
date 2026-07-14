@@ -19,9 +19,22 @@ APPS_SCRIPT_TOKEN = os.environ.get("APPS_SCRIPT_TOKEN", "")
 
 MAX_MESSAGE_LENGTH = 2000
 MAX_BOOK_FIELD_LENGTH = 500
+# Each /chat-message call now runs a genuinely expensive multi-step Dify pipeline
+# (several LLM calls + an optional web search), so this is intentionally tighter
+# than a typical API rate limit.
 RATE_LIMIT_WINDOW_SECONDS = 60
-RATE_LIMIT_MAX_REQUESTS = 20
+RATE_LIMIT_MAX_REQUESTS = 10
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+# Browser-facing endpoints reject requests whose Origin header (when present) isn't
+# one of these. Requests with no Origin header (curl, same-origin navigations) are
+# still allowed -- this is a defense-in-depth check, not the only thing standing
+# between this app and cross-site abuse (default CORS/browser behavior already
+# blocks most of it), so it deliberately doesn't fail closed on a missing header.
+ALLOWED_ORIGINS = {
+    "https://cate-library-ai-assistant.vercel.app",
+    "http://localhost:5001",
+    "http://127.0.0.1:5001",
+}
 _DEFAULT_CONFIRMATIONS = {
     "yes": "Got it — I've noted this for the librarian to consider purchasing.",
     "no": "No problem! Let me know if you'd like help finding something else.",
@@ -47,6 +60,11 @@ def _rate_limited(key: str) -> bool:
         return True
     log.append(now)
     return False
+
+
+def _origin_allowed() -> bool:
+    origin = request.headers.get("Origin")
+    return not origin or origin in ALLOWED_ORIGINS
 
 
 def _visitor_user_id(body: dict) -> str:
@@ -102,8 +120,8 @@ def _stream_chat_events(resp, conversation_id: str):
         elif event_type == "message_end":
             break
         elif event_type == "error":
-            message = event.get("message", "Dify workflow error")
-            yield f"event: error\ndata: {json.dumps({'error': message})}\n\n"
+            print(f"[chat-message] Dify workflow error: {event.get('message', event)}")
+            yield f"event: error\ndata: {json.dumps({'error': 'The assistant had trouble answering that. Please try again.'})}\n\n"
             return
 
     result = {"answer": answer, "conversation_id": conversation_id}
@@ -138,6 +156,8 @@ def chat():
 
 @app.route("/chat-message", methods=["POST"])
 def chat_message():
+    if not _origin_allowed():
+        return jsonify({"error": "Forbidden"}), 403
     if _rate_limited(request.remote_addr or "unknown"):
         return jsonify({"error": "Too many requests. Please slow down and try again shortly."}), 429
 
@@ -186,6 +206,8 @@ def chat_message():
 
 @app.route("/human-input-submit", methods=["POST"])
 def human_input_submit():
+    if not _origin_allowed():
+        return jsonify({"error": "Forbidden"}), 403
     if _rate_limited(request.remote_addr or "unknown"):
         return jsonify({"error": "Too many requests. Please slow down and try again shortly."}), 429
 
@@ -247,6 +269,9 @@ def human_input_submit():
 
 @app.route("/clear-conversation", methods=["POST"])
 def clear_conversation():
+    if not _origin_allowed():
+        return jsonify({"error": "Forbidden"}), 403
+
     body = request.json or {}
     conversation_id = body.get("conversation_id", "").strip()
     if not conversation_id:
