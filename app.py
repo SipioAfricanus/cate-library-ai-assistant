@@ -79,50 +79,61 @@ def _stream_chat_events(resp, conversation_id: str):
     message_id = ""
     last_status = None
 
-    for raw_line in resp.iter_lines():
-        if not raw_line:
-            continue
-        line = raw_line.decode("utf-8")
-        if not line.startswith("data:"):
-            continue
-        payload = line[len("data:"):].strip()
-        if not payload:
-            continue
-        event = json.loads(payload)
-        conversation_id = event.get("conversation_id", conversation_id)
-        message_id = event.get("message_id", message_id)
-        event_type = event.get("event")
+    try:
+        for raw_line in resp.iter_lines():
+            if not raw_line:
+                continue
+            line = raw_line.decode("utf-8")
+            if not line.startswith("data:"):
+                continue
+            payload = line[len("data:"):].strip()
+            if not payload:
+                continue
+            event = json.loads(payload)
+            conversation_id = event.get("conversation_id", conversation_id)
+            message_id = event.get("message_id", message_id)
+            event_type = event.get("event")
 
-        if event_type == "node_started":
-            node_type = (event.get("data") or {}).get("node_type")
-            label = NODE_STATUS_LABELS.get(node_type)
-            if label and label != last_status:
-                last_status = label
-                yield f"event: status\ndata: {json.dumps({'message': label})}\n\n"
-        elif event_type == "message":
-            answer += event.get("answer", "")
-        elif event_type == "human_input_required":
-            data = event.get("data", {})
-            result = {
-                "requires_action": True,
-                "conversation_id": conversation_id,
-                "message_id": message_id,
-                "answer": answer,
-                "form_token": data.get("form_token", ""),
-                "question": data.get("form_content", ""),
-                "actions": [
-                    {"id": a.get("id"), "title": a.get("title")}
-                    for a in data.get("actions", [])
-                ],
-            }
-            yield f"event: done\ndata: {json.dumps(result)}\n\n"
-            return
-        elif event_type == "message_end":
-            break
-        elif event_type == "error":
-            print(f"[chat-message] Dify workflow error: {event.get('message', event)}")
+            if event_type == "node_started":
+                node_type = (event.get("data") or {}).get("node_type")
+                label = NODE_STATUS_LABELS.get(node_type)
+                if label and label != last_status:
+                    last_status = label
+                    yield f"event: status\ndata: {json.dumps({'message': label})}\n\n"
+            elif event_type == "message":
+                answer += event.get("answer", "")
+            elif event_type == "human_input_required":
+                data = event.get("data", {})
+                result = {
+                    "requires_action": True,
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                    "answer": answer,
+                    "form_token": data.get("form_token", ""),
+                    "question": data.get("form_content", ""),
+                    "actions": [
+                        {"id": a.get("id"), "title": a.get("title")}
+                        for a in data.get("actions", [])
+                    ],
+                }
+                yield f"event: done\ndata: {json.dumps(result)}\n\n"
+                return
+            elif event_type == "message_end":
+                break
+            elif event_type == "error":
+                print(f"[chat-message] Dify workflow error: {event.get('message', event)}")
+                yield f"event: error\ndata: {json.dumps({'error': 'The assistant had trouble answering that. Please try again.'})}\n\n"
+                return
+    except Exception as exc:
+        # Upstream stream dropped mid-flight (e.g. ChunkedEncodingError) or a malformed
+        # frame. If we already accumulated a usable answer, deliver it; otherwise show a
+        # clean, generic retry message instead of an unhandled 500.
+        print(f"[chat-message] stream interrupted: {exc}")
+        if answer.strip():
+            yield f"event: done\ndata: {json.dumps({'answer': answer, 'conversation_id': conversation_id})}\n\n"
+        else:
             yield f"event: error\ndata: {json.dumps({'error': 'The assistant had trouble answering that. Please try again.'})}\n\n"
-            return
+        return
 
     result = {"answer": answer, "conversation_id": conversation_id}
     yield f"event: done\ndata: {json.dumps(result)}\n\n"

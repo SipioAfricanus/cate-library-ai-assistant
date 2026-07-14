@@ -416,8 +416,10 @@
         if (data.answer) addMessage(data.answer, 'bot');
         addMessage(data.question || 'Please choose an option:', 'bot');
         renderActionButtons(data.actions || [], data.form_token, data.message_id, data.answer || '');
+        window.ramMascot?.sad(); // reaching this pause means the book wasn't found as-is
       } else {
         addMessage(data.answer || '(no response)', 'bot');
+        window.ramMascot?.reactToAnswer(data.answer || '');
       }
     }
 
