@@ -160,6 +160,12 @@ def _poll_for_answer(conversation_id: str, message_id: str, user: str, attempts:
     return None
 
 
+@app.route("/sleep-test/<int:seconds>")
+def sleep_test(seconds):
+    time.sleep(seconds)
+    return jsonify({"slept": seconds})
+
+
 @app.route("/")
 def chat():
     return render_template("chat.html")
