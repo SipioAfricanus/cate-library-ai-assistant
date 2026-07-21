@@ -139,7 +139,11 @@ def _stream_chat_events(resp, conversation_id: str):
     yield f"event: done\ndata: {json.dumps(result)}\n\n"
 
 
-def _poll_for_answer(conversation_id: str, message_id: str, user: str, attempts: int = 10, delay: float = 1.0):
+def _poll_for_answer(conversation_id: str, message_id: str, user: str, attempts: int = 24, delay: float = 1.8):
+    # Resuming after a Human Input submission re-runs several LLM nodes (now with Memory
+    # enabled, which adds real latency), and can legitimately take 30-40+ seconds. Verified
+    # empirically that Vercel's own function timeout is comfortably above 55s on this project,
+    # so the budget here (~45s) is the actual constraint to tune, not the platform.
     for attempt in range(attempts):
         if attempt > 0:
             time.sleep(delay)
@@ -148,7 +152,7 @@ def _poll_for_answer(conversation_id: str, message_id: str, user: str, attempts:
                 f"{DIFY_BASE_URL}/messages",
                 headers={"Authorization": f"Bearer {DIFY_CHATFLOW_API_KEY}"},
                 params={"conversation_id": conversation_id, "user": user},
-                timeout=15,
+                timeout=8,
             )
         except requests.RequestException:
             continue
@@ -158,12 +162,6 @@ def _poll_for_answer(conversation_id: str, message_id: str, user: str, attempts:
             if msg.get("id") == message_id and msg.get("answer"):
                 return msg["answer"]
     return None
-
-
-@app.route("/sleep-test/<int:seconds>")
-def sleep_test(seconds):
-    time.sleep(seconds)
-    return jsonify({"slept": seconds})
 
 
 @app.route("/")
