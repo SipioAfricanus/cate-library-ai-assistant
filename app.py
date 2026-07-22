@@ -139,29 +139,39 @@ def _stream_chat_events(resp, conversation_id: str):
     yield f"event: done\ndata: {json.dumps(result)}\n\n"
 
 
-def _poll_for_answer(conversation_id: str, message_id: str, user: str, attempts: int = 24, delay: float = 1.8):
-    # Resuming after a Human Input submission re-runs several LLM nodes (now with Memory
-    # enabled, which adds real latency), and can legitimately take 30-40+ seconds. Verified
-    # empirically that Vercel's own function timeout is comfortably above 55s on this project,
-    # so the budget here (~45s) is the actual constraint to tune, not the platform.
-    for attempt in range(attempts):
-        if attempt > 0:
-            time.sleep(delay)
-        try:
-            resp = requests.get(
-                f"{DIFY_BASE_URL}/messages",
-                headers={"Authorization": f"Bearer {DIFY_CHATFLOW_API_KEY}"},
-                params={"conversation_id": conversation_id, "user": user},
-                timeout=8,
-            )
-        except requests.RequestException:
-            continue
-        if resp.status_code != 200:
-            continue
-        for msg in resp.json().get("data", []):
-            if msg.get("id") == message_id and msg.get("answer"):
-                return msg["answer"]
+def _fetch_message_answer(conversation_id: str, message_id: str, user: str):
+    # Single, non-looping check. Resuming after a Human Input submission re-runs several
+    # LLM nodes (now with Memory enabled, which adds real, quite variable latency -- observed
+    # anywhere from ~39s to 50s+), so this is polled repeatedly from the client via
+    # /poll-human-input instead of blocking one long-lived request on a guessed timeout.
+    try:
+        resp = requests.get(
+            f"{DIFY_BASE_URL}/messages",
+            headers={"Authorization": f"Bearer {DIFY_CHATFLOW_API_KEY}"},
+            params={"conversation_id": conversation_id, "user": user},
+            timeout=8,
+        )
+    except requests.RequestException:
+        return None
+    if resp.status_code != 200:
+        return None
+    for msg in resp.json().get("data", []):
+        if msg.get("id") == message_id and msg.get("answer"):
+            return msg["answer"]
     return None
+
+
+def _dedupe_answer(answer: str, prior_answer: str, action_id: str) -> str:
+    # Dify's persisted answer is often identical to what was already shown before the pause
+    # (no separate confirmation text gets appended after resuming). Only surface genuinely
+    # new content; otherwise fall back to a short canned confirmation instead of a duplicate.
+    if prior_answer and answer.startswith(prior_answer):
+        new_text = answer[len(prior_answer):].strip()
+    elif answer == prior_answer:
+        new_text = ""
+    else:
+        new_text = answer
+    return new_text or _DEFAULT_CONFIRMATIONS.get(action_id, "Thanks for letting me know!")
 
 
 @app.route("/")
@@ -259,27 +269,47 @@ def human_input_submit():
         print(f"[human-input-submit] Dify submit returned {resp.status_code}: {resp.text}")
         return jsonify({"error": "Could not submit your response right now. Please try again."}), 502
 
-    answer = _poll_for_answer(conversation_id, message_id, user)
+    # Submission itself is quick; the workflow resuming behind it is not (30-50+s observed
+    # with Memory enabled on several nodes). Rather than blocking this request on that, tell
+    # the client to poll /poll-human-input, which does a single cheap check per call.
+    return jsonify({
+        "pending": True,
+        "conversation_id": conversation_id,
+        "message_id": message_id,
+        "action_id": action_id,
+        "prior_answer": prior_answer,
+    })
+
+
+@app.route("/poll-human-input", methods=["POST"])
+def poll_human_input():
+    if not _origin_allowed():
+        return jsonify({"error": "Forbidden"}), 403
+    if _rate_limited(request.remote_addr or "unknown"):
+        return jsonify({"error": "Too many requests. Please slow down and try again shortly."}), 429
+
+    body = request.json or {}
+    message_id = (body.get("message_id") or "").strip()
+    conversation_id = (body.get("conversation_id") or "").strip()
+    action_id = (body.get("action_id") or "").strip()
+    prior_answer = body.get("prior_answer") or ""
+
+    if not message_id or not conversation_id:
+        return jsonify({"error": "Missing message_id or conversation_id."}), 400
+
+    if not DIFY_CHATFLOW_API_KEY:
+        return jsonify({"error": "Server is missing DIFY_CHATFLOW_API_KEY. Set it in .env and restart."}), 500
+
+    user = _visitor_user_id(body)
+    answer = _fetch_message_answer(conversation_id, message_id, user)
     if answer is None:
-        return jsonify({
-            "error": "Your response was recorded, but the assistant is taking longer than "
-                     "expected. Please check back in a moment."
-        }), 504
+        return jsonify({"ready": False})
 
-    # Dify's persisted answer is often identical to what was already shown before the pause
-    # (no separate confirmation text gets appended after resuming). Only surface genuinely
-    # new content; otherwise fall back to a short canned confirmation instead of a duplicate.
-    if prior_answer and answer.startswith(prior_answer):
-        new_text = answer[len(prior_answer):].strip()
-    elif answer == prior_answer:
-        new_text = ""
-    else:
-        new_text = answer
-
-    if not new_text:
-        new_text = _DEFAULT_CONFIRMATIONS.get(action_id, "Thanks for letting me know!")
-
-    return jsonify({"answer": new_text, "conversation_id": conversation_id})
+    return jsonify({
+        "ready": True,
+        "answer": _dedupe_answer(answer, prior_answer, action_id),
+        "conversation_id": conversation_id,
+    })
 
 
 @app.route("/clear-conversation", methods=["POST"])
