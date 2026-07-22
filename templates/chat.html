@@ -497,11 +497,18 @@
     // check-only endpoint every few seconds until the answer is ready.
     async function pollHumanInputResult(pendingInfo, typingEl) {
       const maxWaitMs = 100000;
-      const intervalMs = 2500;
+      const intervalMs = 1500;
       const startedAt = Date.now();
+      let firstCheck = true;
 
       while (Date.now() - startedAt < maxWaitMs) {
-        await new Promise((r) => setTimeout(r, intervalMs));
+        if (firstCheck) {
+          // Check right away -- Dify sometimes resolves in a few seconds, and there's no
+          // reason to sit out a full interval before ever looking.
+          firstCheck = false;
+        } else {
+          await new Promise((r) => setTimeout(r, intervalMs));
+        }
         const elapsedS = Math.round((Date.now() - startedAt) / 1000);
         typingEl.textContent = elapsedS > 12 ? `Still working on it... (${elapsedS}s)` : 'Thinking...';
 

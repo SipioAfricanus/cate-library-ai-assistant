@@ -48,6 +48,10 @@ NODE_STATUS_LABELS = {
 
 app = Flask(__name__)
 
+# Reused across calls (and across requests on a warm serverless instance) instead of opening
+# a fresh TCP/TLS connection to Dify/Apps Script every time.
+_session = requests.Session()
+
 _request_log: dict[str, deque] = defaultdict(deque)
 
 
@@ -145,7 +149,7 @@ def _fetch_message_answer(conversation_id: str, message_id: str, user: str):
     # anywhere from ~39s to 50s+), so this is polled repeatedly from the client via
     # /poll-human-input instead of blocking one long-lived request on a guessed timeout.
     try:
-        resp = requests.get(
+        resp = _session.get(
             f"{DIFY_BASE_URL}/messages",
             headers={"Authorization": f"Bearer {DIFY_CHATFLOW_API_KEY}"},
             params={"conversation_id": conversation_id, "user": user},
@@ -199,7 +203,7 @@ def chat_message():
         return jsonify({"error": "Server is missing DIFY_CHATFLOW_API_KEY. Set it in .env and restart."}), 500
 
     try:
-        resp = requests.post(
+        resp = _session.post(
             f"{DIFY_BASE_URL}/chat-messages",
             headers={
                 "Authorization": f"Bearer {DIFY_CHATFLOW_API_KEY}",
@@ -252,7 +256,7 @@ def human_input_submit():
     user = _visitor_user_id(body)
 
     try:
-        resp = requests.post(
+        resp = _session.post(
             f"{DIFY_BASE_URL}/form/human_input/{form_token}",
             headers={
                 "Authorization": f"Bearer {DIFY_CHATFLOW_API_KEY}",
@@ -326,7 +330,7 @@ def clear_conversation():
         return jsonify({"error": "Server is missing DIFY_CHATFLOW_API_KEY. Set it in .env and restart."}), 500
 
     try:
-        resp = requests.delete(
+        resp = _session.delete(
             f"{DIFY_BASE_URL}/conversations/{conversation_id}",
             headers={
                 "Authorization": f"Bearer {DIFY_CHATFLOW_API_KEY}",
@@ -368,7 +372,7 @@ def book_requests():
         return jsonify({"error": "Server is missing APPS_SCRIPT_URL. Set it in .env and restart."}), 500
 
     try:
-        resp = requests.post(
+        resp = _session.post(
             APPS_SCRIPT_URL,
             json={
                 "token": APPS_SCRIPT_TOKEN,
