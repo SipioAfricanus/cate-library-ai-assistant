@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ram 2D harness</title>
+<!--
+  No importmap and no build step: the 2D mascot has zero dependencies, so the source
+  loads directly as ES modules. Serve the project root and open this file:
+
+      python3 -m http.server 8765
+      http://localhost:8765/mascot/dev/harness.html
+
+  NO SOUND ANYWHERE ON THIS PAGE. Audio is not wired up yet, and when it is it will
+  default to off behind an explicit toggle -- which this page will not include.
+-->
+<style>
+  :root { --bg:#eef4fb; --line:#d6e2f2; --ink:#16324f; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px -apple-system, system-ui, sans-serif; }
+  header { position:sticky; top:0; z-index:5; background:#fff; border-bottom:1px solid var(--line);
+           padding:10px 16px; display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:15px; margin:0 10px 0 0; }
+  label { display:inline-flex; gap:6px; align-items:center; font-size:12px; }
+  button { font:inherit; font-size:12px; padding:5px 10px; border:1px solid var(--line);
+           background:#fff; border-radius:8px; cursor:pointer; }
+  button:hover { border-color:#7aa2d8; }
+  .grid { display:flex; gap:18px; padding:18px; align-items:flex-start; flex-wrap:wrap; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card h2 { font-size:11px; margin:0 0 8px; text-transform:uppercase; letter-spacing:.06em; opacity:.6; }
+  .stage { border-radius:10px; overflow:hidden; }
+  .stage canvas { width:100%; height:100%; display:block; }
+  /* The gradient the real site puts behind the mascot. If the canvas ever paints an
+     opaque background this disappears -- which is the transparency regression test. */
+  .grad { background:linear-gradient(180deg,#f3f8ff 0%,#e3ecfa 100%); }
+  .checker { background-image:
+      linear-gradient(45deg,#ccc 25%,transparent 25%), linear-gradient(-45deg,#ccc 25%,transparent 25%),
+      linear-gradient(45deg,transparent 75%,#ccc 75%), linear-gradient(-45deg,transparent 75%,#ccc 75%);
+      background-size:16px 16px; background-position:0 0,0 8px,8px -8px,-8px 0; }
+  .dark { background:#1b2430; }
+  #sBig{width:460px;height:460px} #s300{width:300px;height:300px}
+  #s200{width:200px;height:200px} #s120{width:120px;height:120px}
+  pre { font:11px ui-monospace,Menlo,monospace; margin:8px 0 0; opacity:.75; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Ram 2D</h1>
+  <label>bg
+    <select id="bg">
+      <option value="grad">site gradient</option>
+      <option value="checker">checkerboard</option>
+      <option value="dark">dark</option>
+    </select>
+  </label>
+  <button id="flip">Flip facing</button>
+  <button id="pause">Pause</button>
+  <label><input type="checkbox" id="bones"> show pivots</label>
+</header>
+
+<div class="grid">
+  <div class="card">
+    <h2>460px &mdash; inspection</h2>
+    <div class="stage grad" id="sBig"><canvas id="cBig"></canvas></div>
+    <pre id="stats"></pre>
+  </div>
+  <div class="card">
+    <h2>300px &mdash; website panel</h2>
+    <div class="stage grad" id="s300"><canvas id="c300"></canvas></div>
+  </div>
+  <div class="card">
+    <h2>200px &mdash; desktop pet</h2>
+    <div class="stage checker" id="s200"><canvas id="c200"></canvas></div>
+  </div>
+  <div class="card">
+    <h2>120px &mdash; silhouette</h2>
+    <div class="stage checker" id="s120"><canvas id="c120"></canvas></div>
+    <pre>does it still read as a ram?</pre>
+  </div>
+</div>
+
+<script type="module">
+import { createMascot, DESIGN } from '/mascot/src/index.js';
+import { updateWorld, collect } from '/mascot/src/rig/node.js';
+
+const mk = (c, s) => createMascot({
+  canvas: document.getElementById(c),
+  container: document.getElementById(s),
+  visibilityPolicy: 'never',   // automation reports the page hidden; always render here
+});
+
+const rams = [mk('cBig','sBig'), mk('c300','s300'), mk('c200','s200'), mk('c120','s120')];
+window.__ram = { rams, big: rams[0], DESIGN };
+
+const $ = (id) => document.getElementById(id);
+
+$('bg').onchange = (e) => {
+  document.querySelectorAll('.stage').forEach((s) => {
+    s.classList.remove('grad','checker','dark');
+    s.classList.add(e.target.value);
+  });
+};
+
+$('flip').onclick = () => rams.forEach((r) => r.setFacing(-r.getFacing()));
+
+let paused = false;
+$('pause').onclick = () => {
+  paused = !paused;
+  rams.forEach((r) => r.setPaused(paused));
+  $('pause').textContent = paused ? 'Resume' : 'Pause';
+};
+
+// Pivot overlay: draws a dot at every node's world origin, which is how you catch a joint
+// that is rotating about the wrong point -- the single most common cut-out rig bug.
+let showBones = false;
+$('bones').onchange = (e) => { showBones = e.target.checked; };
+(function overlay() {
+  requestAnimationFrame(overlay);
+  if (!showBones) return;
+  const r = rams[0];
+  const ctx = r.surface.ctx;
+  updateWorld(r.rig.root, r.surface.fitMatrix(DESIGN, { anchorY: 1 }));
+  ctx.setTransform(1,0,0,1,0,0);
+  for (const n of collect(r.rig.root, [])) {
+    ctx.beginPath();
+    ctx.arc(n.world.e, n.world.f, 3, 0, Math.PI*2);
+    ctx.fillStyle = '#ff3b7b';
+    ctx.fill();
+  }
+})();
+
+setInterval(() => {
+  const s = rams[0].stats();
+  $('stats').textContent = `parts drawn: ${s.parts}   surface: ${s.w}x${s.h} @${s.dpr}x`;
+}, 500);
+</script>
+</body>
+</html>
