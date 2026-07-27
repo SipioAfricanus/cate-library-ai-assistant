@@ -24,6 +24,13 @@ MAX_BOOK_FIELD_LENGTH = 500
 # than a typical API rate limit.
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_MAX_REQUESTS = 10
+# /poll-human-input gets its own, far larger budget, tracked under a separate key.
+#
+# It is a single cheap GET against Dify's /messages -- and the flow now pauses TWICE per
+# question (first to choose fast/deep, then to confirm a purchase request), with each pause
+# polled roughly every 1.5s. A single question can therefore issue ~20 polls. Sharing the
+# 10/60s budget above, a user would get 429s partway through their own first answer.
+POLL_RATE_LIMIT_MAX_REQUESTS = 150
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 # Browser-facing endpoints reject requests whose Origin header (when present) isn't
 # one of these. Requests with no Origin header (curl, same-origin navigations) are
@@ -38,7 +45,24 @@ ALLOWED_ORIGINS = {
 _DEFAULT_CONFIRMATIONS = {
     "yes": "Got it — I've noted this for the librarian to consider purchasing.",
     "no": "No problem! Let me know if you'd like help finding something else.",
+    # The mode picker resumes into a full search, so these are only ever reached if Dify
+    # somehow produced no new text at all. Without them a mode choice could surface the
+    # "Thanks for letting me know!" fallback, which reads as a non-answer.
+    "fast": "Running a fast search...",
+    "deep": "Running a deep search — this one takes a little longer.",
 }
+# Which Human Input node is this? Keyed off the ACTION IDS rather than node_title, because
+# titles ("Human Input", "Human Input 2") are incidental Dify defaults that get renamed in
+# the editor, whereas the action ids are what the chatflow's branching actually switches on.
+_FORM_ACTION_KINDS = {
+    frozenset({"fast", "deep"}): "mode",
+    frozenset({"yes", "no"}): "confirm",
+}
+
+
+def _form_kind(actions) -> str:
+    ids = frozenset((a or {}).get("id") for a in (actions or []) if (a or {}).get("id"))
+    return _FORM_ACTION_KINDS.get(ids, "other")
 NODE_STATUS_LABELS = {
     "knowledge-retrieval": "Searching the library catalog...",
     "tool": "Searching the web...",
@@ -55,12 +79,14 @@ _session = requests.Session()
 _request_log: dict[str, deque] = defaultdict(deque)
 
 
-def _rate_limited(key: str) -> bool:
+def _rate_limited(key: str, limit: int = RATE_LIMIT_MAX_REQUESTS) -> bool:
+    # Callers prefix the key per bucket (e.g. "poll:<ip>") so a burst of cheap polls can't
+    # eat the budget for expensive /chat-message calls, or vice versa.
     now = time.monotonic()
     log = _request_log[key]
     while log and now - log[0] > RATE_LIMIT_WINDOW_SECONDS:
         log.popleft()
-    if len(log) >= RATE_LIMIT_MAX_REQUESTS:
+    if len(log) >= limit:
         return True
     log.append(now)
     return False
@@ -108,6 +134,10 @@ def _stream_chat_events(resp, conversation_id: str):
                 answer += event.get("answer", "")
             elif event_type == "human_input_required":
                 data = event.get("data", {})
+                actions = [
+                    {"id": a.get("id"), "title": a.get("title")}
+                    for a in data.get("actions", [])
+                ]
                 result = {
                     "requires_action": True,
                     "conversation_id": conversation_id,
@@ -115,10 +145,12 @@ def _stream_chat_events(resp, conversation_id: str):
                     "answer": answer,
                     "form_token": data.get("form_token", ""),
                     "question": data.get("form_content", ""),
-                    "actions": [
-                        {"id": a.get("id"), "title": a.get("title")}
-                        for a in data.get("actions", [])
-                    ],
+                    "actions": actions,
+                    # Lets the client pick the right wait copy and skip the "book not found"
+                    # mascot reaction: the mode picker fires on EVERY question, before any
+                    # searching has happened, so it carries no bad news.
+                    "form_kind": _form_kind(actions),
+                    "node_title": data.get("node_title", ""),
                 }
                 yield f"event: done\ndata: {json.dumps(result)}\n\n"
                 return
@@ -143,11 +175,45 @@ def _stream_chat_events(resp, conversation_id: str):
     yield f"event: done\ndata: {json.dumps(result)}\n\n"
 
 
-def _fetch_message_answer(conversation_id: str, message_id: str, user: str):
-    # Single, non-looping check. Resuming after a Human Input submission re-runs several
-    # LLM nodes (now with Memory enabled, which adds real, quite variable latency -- observed
-    # anywhere from ~39s to 50s+), so this is polled repeatedly from the client via
-    # /poll-human-input instead of blocking one long-lived request on a guessed timeout.
+def _pending_form(msg: dict):
+    # `extra_contents` holds one entry per Human Input form this message has reached, each
+    # with a `submitted` flag. An UNSUBMITTED entry still carries a live `form_token` (Dify
+    # nulls the token once the form is answered), so this is what lets us resume it.
+    #
+    # This is the only reliable way to notice that the workflow paused AGAIN after we
+    # resumed it. By the time the second pause exists, the message's `answer` field is
+    # already populated with the text produced before that pause -- so judging readiness by
+    # `answer` alone reports a finished turn, drops the pending buttons, and strands the
+    # Dify run paused until its token expires.
+    for entry in msg.get("extra_contents") or []:
+        if entry.get("type") != "human_input" or entry.get("submitted"):
+            continue
+        definition = entry.get("form_definition") or {}
+        token = definition.get("form_token")
+        if not token:
+            continue
+        actions = [
+            {"id": a.get("id"), "title": a.get("title")}
+            for a in definition.get("actions", [])
+        ]
+        return {
+            "form_token": token,
+            "question": definition.get("form_content", ""),
+            "actions": actions,
+            "form_kind": _form_kind(actions),
+            "node_title": definition.get("node_title", ""),
+        }
+    return None
+
+
+def _fetch_message_state(conversation_id: str, message_id: str, user: str):
+    """Returns (answer, pending_form) for one message; (None, None) if not visible yet.
+
+    Single, non-looping check. Resuming after a Human Input submission re-runs several LLM
+    nodes (with Memory enabled, latency is real and variable -- 10s to 50s+ observed), so
+    the client polls this via /poll-human-input rather than blocking one long-lived request
+    on a guessed timeout.
+    """
     try:
         resp = _session.get(
             f"{DIFY_BASE_URL}/messages",
@@ -156,26 +222,31 @@ def _fetch_message_answer(conversation_id: str, message_id: str, user: str):
             timeout=8,
         )
     except requests.RequestException:
-        return None
+        return None, None
     if resp.status_code != 200:
-        return None
+        return None, None
     for msg in resp.json().get("data", []):
-        if msg.get("id") == message_id and msg.get("answer"):
-            return msg["answer"]
-    return None
+        if msg.get("id") == message_id:
+            return (msg.get("answer") or ""), _pending_form(msg)
+    return None, None
+
+
+def _new_text(answer: str, prior_answer: str) -> str:
+    # Dify persists the whole answer-so-far, which includes anything already rendered before
+    # a pause. Return only what's genuinely new so text isn't shown twice.
+    if prior_answer and answer.startswith(prior_answer):
+        return answer[len(prior_answer):].strip()
+    if answer == prior_answer:
+        return ""
+    return answer
 
 
 def _dedupe_answer(answer: str, prior_answer: str, action_id: str) -> str:
-    # Dify's persisted answer is often identical to what was already shown before the pause
-    # (no separate confirmation text gets appended after resuming). Only surface genuinely
-    # new content; otherwise fall back to a short canned confirmation instead of a duplicate.
-    if prior_answer and answer.startswith(prior_answer):
-        new_text = answer[len(prior_answer):].strip()
-    elif answer == prior_answer:
-        new_text = ""
-    else:
-        new_text = answer
-    return new_text or _DEFAULT_CONFIRMATIONS.get(action_id, "Thanks for letting me know!")
+    # As above, but for a FINAL answer: when resuming produced no new text at all, a short
+    # canned confirmation beats echoing a duplicate of what's already on screen.
+    return _new_text(answer, prior_answer) or _DEFAULT_CONFIRMATIONS.get(
+        action_id, "Thanks for letting me know!"
+    )
 
 
 @app.route("/")
@@ -289,7 +360,9 @@ def human_input_submit():
 def poll_human_input():
     if not _origin_allowed():
         return jsonify({"error": "Forbidden"}), 403
-    if _rate_limited(request.remote_addr or "unknown"):
+    # Separate, much larger bucket -- see POLL_RATE_LIMIT_MAX_REQUESTS. Two pauses per
+    # question at a 1.5s poll interval means a single answer can need ~20 of these.
+    if _rate_limited(f"poll:{request.remote_addr or 'unknown'}", POLL_RATE_LIMIT_MAX_REQUESTS):
         return jsonify({"error": "Too many requests. Please slow down and try again shortly."}), 429
 
     body = request.json or {}
@@ -305,15 +378,38 @@ def poll_human_input():
         return jsonify({"error": "Server is missing DIFY_CHATFLOW_API_KEY. Set it in .env and restart."}), 500
 
     user = _visitor_user_id(body)
-    answer = _fetch_message_answer(conversation_id, message_id, user)
+    answer, pending = _fetch_message_state(conversation_id, message_id, user)
     if answer is None:
         return jsonify({"ready": False})
 
-    return jsonify({
-        "ready": True,
-        "answer": _dedupe_answer(answer, prior_answer, action_id),
-        "conversation_id": conversation_id,
-    })
+    if pending:
+        # The workflow paused AGAIN -- typically: mode chosen, search ran, and now it's
+        # asking whether the library should purchase the books it couldn't find.
+        #
+        # Checked BEFORE the answer, and that order is the whole fix. At this point the
+        # message legitimately has both a populated `answer` (the text produced before this
+        # pause) and a live pending form, so returning on the answer first would render the
+        # turn as finished and silently discard the buttons.
+        return jsonify({
+            "ready": True,
+            "requires_action": True,
+            "conversation_id": conversation_id,
+            "message_id": message_id,
+            # Raw new-text diff, not _dedupe_answer: the canned fallback belongs to a final
+            # answer, and injecting "Running a fast search..." above the purchase question
+            # would read as a non-sequitur.
+            "answer": _new_text(answer, prior_answer),
+            **pending,
+        })
+
+    if answer:
+        return jsonify({
+            "ready": True,
+            "answer": _dedupe_answer(answer, prior_answer, action_id),
+            "conversation_id": conversation_id,
+        })
+
+    return jsonify({"ready": False})
 
 
 @app.route("/clear-conversation", methods=["POST"])

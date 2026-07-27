@@ -389,8 +389,10 @@
       return el;
     }
 
-    // Renders a row of Yes/No-style buttons when Dify pauses on a Human Input node.
-    function renderActionButtons(actions, formToken, messageId, priorAnswer) {
+    // Renders a row of choice buttons when Dify pauses on a Human Input node. Used by both
+    // pauses in the flow: the fast/deep search-mode picker and the purchase confirmation.
+    // `formKind` ('mode' | 'confirm') only affects wait copy, never the submit itself.
+    function renderActionButtons(actions, formToken, messageId, priorAnswer, formKind) {
       const row = document.createElement('div');
       row.className = 'suggestions';
       actions.forEach((action) => {
@@ -400,12 +402,28 @@
         btn.addEventListener('click', () => {
           addMessage(action.title, 'user');
           row.remove();
-          submitHumanInput(formToken, action.id, messageId, priorAnswer);
+          submitHumanInput(formToken, action.id, messageId, priorAnswer, formKind);
         });
         row.appendChild(btn);
       });
       messagesEl.appendChild(row);
       messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    // What to show while a resumed workflow is still running. A deep search is genuinely
+    // slower, so telling the user that up front beats an unqualified "Thinking..." that
+    // makes it look stuck.
+    function waitLabel(elapsedS, formKind, actionId) {
+      const deep = formKind === 'mode' && actionId === 'deep';
+      if (formKind === 'confirm') {
+        return elapsedS > 12 ? `Recording your request... (${elapsedS}s)` : 'Recording your request...';
+      }
+      if (deep) {
+        return elapsedS > 8
+          ? `Deep search running — this takes longer than a fast search... (${elapsedS}s)`
+          : 'Starting a deep search...';
+      }
+      return elapsedS > 12 ? `Still working on it... (${elapsedS}s)` : 'Searching the catalog...';
     }
 
     // Renders whatever the backend returned: a plain answer, or an answer-so-far plus a
@@ -415,8 +433,13 @@
       if (data.requires_action) {
         if (data.answer) addMessage(data.answer, 'bot');
         addMessage(data.question || 'Please choose an option:', 'bot');
-        renderActionButtons(data.actions || [], data.form_token, data.message_id, data.answer || '');
-        window.ramMascot?.sad(); // reaching this pause means the book wasn't found as-is
+        renderActionButtons(
+          data.actions || [], data.form_token, data.message_id, data.answer || '', data.form_kind
+        );
+        // Only the purchase confirmation means "couldn't find it as asked". The mode picker
+        // now pauses before ANY searching, on every single question, so reacting sadly to
+        // every pause would leave the ram crestfallen at the start of every search.
+        if (data.form_kind === 'confirm') window.ramMascot?.sad();
       } else {
         addMessage(data.answer || '(no response)', 'bot');
         window.ramMascot?.reactToAnswer(data.answer || '');
@@ -495,8 +518,11 @@
     // LLM nodes re-run, now with Memory enabled). Rather than one long-lived request racing a
     // guessed timeout, /human-input-submit returns immediately and this polls a cheap
     // check-only endpoint every few seconds until the answer is ready.
-    async function pollHumanInputResult(pendingInfo, typingEl) {
-      const maxWaitMs = 100000;
+    async function pollHumanInputResult(pendingInfo, typingEl, formKind, actionId) {
+      // A deep search legitimately takes much longer than a fast one, and choosing the mode
+      // is now the FIRST thing that happens -- so this budget has to cover a whole search,
+      // not just a short confirmation step.
+      const maxWaitMs = formKind === 'mode' && actionId === 'deep' ? 240000 : 120000;
       const intervalMs = 1500;
       const startedAt = Date.now();
       let firstCheck = true;
@@ -510,7 +536,7 @@
           await new Promise((r) => setTimeout(r, intervalMs));
         }
         const elapsedS = Math.round((Date.now() - startedAt) / 1000);
-        typingEl.textContent = elapsedS > 12 ? `Still working on it... (${elapsedS}s)` : 'Thinking...';
+        typingEl.textContent = waitLabel(elapsedS, formKind, actionId);
 
         let res, data;
         try {
@@ -550,8 +576,8 @@
       );
     }
 
-    async function submitHumanInput(formToken, actionId, messageId, priorAnswer) {
-      const typingEl = addMessage('Thinking...', 'typing');
+    async function submitHumanInput(formToken, actionId, messageId, priorAnswer, formKind) {
+      const typingEl = addMessage(waitLabel(0, formKind, actionId), 'typing');
       window.ramMascot?.setTalking(true);
       try {
         const res = await fetch('/human-input-submit', {
@@ -572,7 +598,7 @@
           typingEl.remove();
           addMessage(data.error || 'Something went wrong.', 'error');
         } else if (data.pending) {
-          await pollHumanInputResult(data, typingEl);
+          await pollHumanInputResult(data, typingEl, formKind, actionId);
         } else {
           typingEl.remove();
           renderResponse(data);

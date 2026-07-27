@@ -1,0 +1,25 @@
+# Keep the deploy to what actually runs in production: app.py, templates/, static/.
+#
+# This exists because local development now creates several large directories that have
+# no business being uploaded. Without it a deploy ships ~400MB of dependencies:
+#   desktop/     289MB - Electron binary for the desktop-pet spike
+#   venv/         69MB - local Python virtualenv (Vercel installs from requirements.txt)
+#   node_modules/ 42MB - three.js + esbuild, only used to build the mascot bundle locally
+#
+# Note the mascot bundle itself IS deployed when present, because it lives in
+# static/vendor/ and is committed as a build artifact -- Vercel runs no Node build step.
+node_modules/
+desktop/
+mascot/
+venv/
+
+# Local tooling and scratch
+.git/
+.claude/
+*.patch
+*.log
+server.log
+__pycache__/
+*.pyc
+.DS_Store
+.pytest_cache/

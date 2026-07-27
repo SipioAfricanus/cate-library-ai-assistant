@@ -6,3 +6,8 @@ server.log
 *.pyc
 .vercel
 .env*
+
+# Node deps arrived with the mascot build tooling (three.js, esbuild) and the Electron
+# desktop-pet spike. The pattern matches at any depth, so it covers desktop/node_modules
+# too -- which holds a ~290MB Electron binary that must never reach the repo.
+node_modules/
