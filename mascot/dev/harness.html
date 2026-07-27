@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ram harness -- old vs new</title>
+<!--
+  Loads mascot/src directly via an importmap, so there is NO build step in the dev loop:
+  edit a source file, hit refresh, see it. Serve from the project root:
+
+      python3 -m http.server 8765
+
+  then open http://localhost:8765/mascot/dev/harness.html
+
+  DELIBERATELY NO #sound-toggle ELEMENT ANYWHERE ON THIS PAGE. The legacy ram.js only
+  ever plays audio from a click on that button while state === 'talking', and this page
+  never calls setTalking(). With no toggle in the DOM there is no reachable code path
+  that can produce a sound.
+-->
+<!--
+  HARNESS-ONLY SHIM, never shipped. Browser-automation contexts report the page as
+  hidden, and legacy ram.js's render loop begins `if (document.hidden) return;` -- so the
+  OLD ram draws nothing and the A/B comparison is empty. Forcing hidden=false lets it
+  render. (This is the same dead-guard problem that the new engine's `visibilityPolicy`
+  option exists to solve properly.)
+-->
+<script>
+  Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+  Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/node_modules/three/build/three.module.js",
+    "three/examples/jsm/controls/OrbitControls.js": "/node_modules/three/examples/jsm/controls/OrbitControls.js",
+    "three/addons/controls/OrbitControls.js": "/node_modules/three/examples/jsm/controls/OrbitControls.js"
+  }
+}
+</script>
+<style>
+  :root { --bg: #eef4fb; --panel: #fff; --line: #d6e2f2; --ink: #16324f; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 14px -apple-system, system-ui, sans-serif; color: var(--ink);
+    background: var(--bg);
+  }
+  header {
+    position: sticky; top: 0; z-index: 10; background: #fff; border-bottom: 1px solid var(--line);
+    padding: 10px 16px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0 12px 0 0; }
+  label { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; white-space: nowrap; }
+  input[type=range] { width: 110px; }
+  .grid { display: flex; gap: 18px; padding: 18px; align-items: flex-start; flex-wrap: wrap; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .card h2 { font-size: 12px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .06em; opacity: .6; }
+  .stage { position: relative; border-radius: 10px; overflow: hidden; }
+  .stage canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+  /* Same gradient the real site puts behind the mascot -- if the render is NOT
+     transparent, this gradient disappears and you get a black or grey box instead.
+     That makes transparency regressions immediately visible rather than subtle. */
+  .grad { background: linear-gradient(180deg, #f3f8ff 0%, #e3ecfa 100%); }
+  .checker {
+    background-image:
+      linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%);
+    background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+  }
+  .dark { background: #1b2430; }
+  #s300 { width: 300px; height: 300px; }
+  #sBig { width: 460px; height: 460px; }
+  #s200 { width: 200px; height: 200px; }
+  #ram-stage { width: 300px; height: 300px; }
+  pre { font: 11px ui-monospace, Menlo, monospace; margin: 8px 0 0; opacity: .75; white-space: pre-wrap; }
+  .warn { color: #a3391f; font-weight: 600; }
+  .ok { color: #1a7a45; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Ram harness</h1>
+  <label>bg
+    <select id="bg">
+      <option value="grad">site gradient</option>
+      <option value="checker">checkerboard</option>
+      <option value="dark">dark</option>
+    </select>
+  </label>
+  <label>quality
+    <select id="quality">
+      <option value="high">high</option>
+      <option value="medium">medium</option>
+      <option value="low">low</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="turn"> turntable</label>
+  <label>exposure <input type="range" id="exposure" min="0.4" max="2.0" step="0.02" value="1.08"><span id="exposureV">1.08</span></label>
+  <label>env <input type="range" id="env" min="0" max="2.5" step="0.05" value="1"><span id="envV">1.00</span></label>
+  <label>hoodie <input type="color" id="cHoodie" value="#3a76c8"></label>
+  <label>wool <input type="color" id="cWool" value="#fbf7ee"></label>
+  <label>horn <input type="color" id="cHorn" value="#dcb26a"></label>
+  <label><input type="checkbox" id="tone" checked> ACES tone mapping</label>
+</header>
+
+<div class="grid">
+  <div class="card">
+    <h2>NEW &mdash; 460px</h2>
+    <div class="stage grad" id="sBig"><canvas id="cBig"></canvas></div>
+    <pre id="statsBig"></pre>
+  </div>
+
+  <div class="card">
+    <h2>NEW &mdash; 300px (site panel size)</h2>
+    <div class="stage grad" id="s300"><canvas id="c300"></canvas></div>
+  </div>
+
+  <div class="card">
+    <h2>OLD &mdash; 300px (for comparison)</h2>
+    <!-- legacy ram.js resolves these exact IDs at module scope -->
+    <div class="stage grad" id="ram-stage"><canvas id="ram-canvas"></canvas></div>
+    <pre>static/ram.js, unmodified</pre>
+  </div>
+
+  <div class="card">
+    <h2>NEW &mdash; 200px (desktop pet size)</h2>
+    <div class="stage checker" id="s200"><canvas id="c200"></canvas></div>
+    <pre>silhouette check: does it still read as a ram this small?</pre>
+  </div>
+</div>
+
+<script type="module">
+import { createMascot } from '/mascot/src/index.js';
+import * as THREE from 'three';
+
+const big = await createMascot({
+  canvas: document.getElementById('cBig'),
+  container: document.getElementById('sBig'),
+  quality: 'high', controls: true, visibilityPolicy: 'never', cameraDistance: 4.6,
+});
+
+const mid = await createMascot({
+  canvas: document.getElementById('c300'),
+  container: document.getElementById('s300'),
+  quality: 'high', controls: true, visibilityPolicy: 'never', cameraDistance: 4.8,
+});
+
+const small = await createMascot({
+  canvas: document.getElementById('c200'),
+  container: document.getElementById('s200'),
+  quality: 'medium', controls: false, visibilityPolicy: 'never', cameraDistance: 5.0,
+});
+
+const all = [big, mid, small];
+window.__ram = { big, mid, small, THREE };
+
+// --- ground check: the plan requires hooves at exactly y=0 ---------------------
+const m = big.measure();
+const stats = document.getElementById('statsBig');
+function report() {
+  const s = big.stats();
+  const off = m.min;
+  const okGround = Math.abs(off) < 0.02;
+  stats.innerHTML =
+    `draw calls: ${s.calls}   triangles: ${s.triangles.toLocaleString()}   programs: ${s.programs}\n` +
+    `height: ${m.height.toFixed(3)}   feet at y=${off.toFixed(4)} ` +
+    `<span class="${okGround ? 'ok' : 'warn'}">${okGround ? 'OK' : 'OFF GROUND -- fix rest-pose angles'}</span>`;
+}
+report();
+setInterval(report, 1000);
+
+// --- controls -----------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+
+$('bg').onchange = (e) => {
+  document.querySelectorAll('.stage').forEach((s) => {
+    s.classList.remove('grad', 'checker', 'dark');
+    s.classList.add(e.target.value);
+  });
+};
+
+$('turn').onchange = (e) => all.forEach((r) => { r.three.root.userData.turn = e.target.checked; });
+// turntable is driven by index.js via options, so drive it directly here instead
+let turning = false;
+$('turn').onchange = (e) => { turning = e.target.checked; };
+(function spin() {
+  requestAnimationFrame(spin);
+  if (!turning) return;
+  all.forEach((r) => { r.three.root.rotation.y += 0.006; });
+})();
+
+$('exposure').oninput = (e) => {
+  const v = parseFloat(e.target.value);
+  $('exposureV').textContent = v.toFixed(2);
+  all.forEach((r) => { r.three.renderer.toneMappingExposure = v; });
+};
+
+$('env').oninput = (e) => {
+  const v = parseFloat(e.target.value);
+  $('envV').textContent = v.toFixed(2);
+  all.forEach((r) => {
+    Object.values(r.three.materials).forEach((mat) => {
+      if (mat && mat.isMeshStandardMaterial) mat.envMapIntensity = v;
+    });
+  });
+};
+
+// ACES on/off, to see exactly what tone mapping is contributing (verification step 3).
+$('tone').onchange = (e) => {
+  all.forEach((r) => {
+    r.three.renderer.toneMapping = e.target.checked
+      ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+    Object.values(r.three.materials).forEach((mat) => {
+      if (mat && mat.isMaterial) mat.needsUpdate = true;
+    });
+  });
+};
+
+function colorBinder(inputId, keys) {
+  $(inputId).oninput = (e) => {
+    all.forEach((r) => {
+      keys.forEach((k) => r.three.materials[k]?.color.set(e.target.value));
+    });
+  };
+}
+colorBinder('cHoodie', ['hoodie']);
+colorBinder('cWool', ['fleece', 'fleeceShade']);
+colorBinder('cHorn', ['horn']);
+
+$('quality').onchange = () => {
+  alert('Quality is set at construction. Reload with the preset you want, or use ?q=medium.');
+};
+
+// Colorspace assertions from verification step 3, checked automatically.
+const r = big.three.renderer;
+console.assert(r.outputColorSpace === THREE.SRGBColorSpace, 'outputColorSpace must be sRGB');
+for (const [name, mat] of Object.entries(big.three.materials)) {
+  if (!mat || !mat.isMaterial) continue;
+  for (const slot of ['normalMap', 'roughnessMap']) {
+    const tex = mat[slot];
+    if (tex) {
+      console.assert(tex.colorSpace === THREE.NoColorSpace,
+        `${name}.${slot} must be NoColorSpace, got ${tex.colorSpace}`);
+    }
+  }
+  if (mat.map) {
+    console.assert(mat.map.colorSpace === THREE.SRGBColorSpace,
+      `${name}.map carries color and must be SRGBColorSpace`);
+  }
+}
+console.log('[harness] colorspace assertions done');
+</script>
+
+<!-- Legacy ram, loaded last and completely unmodified, for the A/B. -->
+<script type="module" src="/static/ram.js"></script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>spike</title>
+<style>
+  /* Every layer must be transparent or the window shows as an opaque box --
+     that IS the transparency test. */
+  html, body {
+    margin: 0; height: 100%; background: transparent; overflow: hidden;
+    font: 12px -apple-system, system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none; cursor: default;
+  }
+  /* Faint marker of the window rectangle so the click-through margin is findable.
+     Deliberately translucent: if transparency were broken you'd see a solid box
+     instead of the desktop through the middle. */
+  #frame {
+    position: absolute; inset: 0;
+    border: 1px dashed rgba(120,120,120,0.35);
+    box-sizing: border-box;
+    pointer-events: none;
+  }
+  #circle {
+    position: absolute; left: 50%; top: 50%;
+    width: 200px; height: 200px; margin: -100px 0 0 -100px;
+    border-radius: 50%;
+    background: #d63bd6;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+    display: grid; place-items: center; text-align: center;
+    color: #fff; font-weight: 600; line-height: 1.5;
+    transition: background 90ms linear, transform 90ms ease-out;
+  }
+  #circle.armed { background: #22a05a; transform: scale(1.04); cursor: pointer; }
+  #hint { opacity: 0.9; font-weight: 400; font-size: 11px; }
+</style>
+
+<div id="frame"></div>
+<div id="circle">
+  <div>
+    <div id="label">click-through</div>
+    <div id="hint">clicks pass to desktop</div>
+    <div id="count" style="margin-top:6px;opacity:.85"></div>
+  </div>
+</div>
+
+<script>
+  const circle = document.getElementById('circle');
+  const label = document.getElementById('label');
+  const hint = document.getElementById('hint');
+  const count = document.getElementById('count');
+  let clicks = 0;
+
+  window.spike.onHover((armed) => {
+    circle.classList.toggle('armed', armed);
+    label.textContent = armed ? 'ARMED' : 'click-through';
+    hint.textContent = armed ? 'click me' : 'clicks pass to desktop';
+  });
+
+  // If this never fires while the circle is green, `focusable:false` is swallowing
+  // mousedown on this macOS build -- rerun with `npm run spike:focusable`.
+  circle.addEventListener('click', () => {
+    clicks += 1;
+    count.textContent = `clicks: ${clicks}`;
+    window.spike.click();
+  });
+</script>

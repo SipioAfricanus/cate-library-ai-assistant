@@ -1,0 +1,16 @@
+{
+  "name": "cate-library-ram",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cate Library AI Assistant desktop mascot",
+  "main": "src/main/main.js",
+  "scripts": {
+    "spike": "electron spike/main.js",
+    "spike:static": "SPIKE_MOVE=0 electron spike/main.js",
+    "spike:focusable": "SPIKE_FOCUSABLE=1 electron spike/main.js",
+    "spike:nopanel": "SPIKE_PANEL=0 electron spike/main.js"
+  },
+  "devDependencies": {
+    "electron": "^40.0.0"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "cate-library-site",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cate Library AI Assistant -- Flask site + shared 3D ram mascot module",
+  "scripts": {
+    "build:web": "node mascot/build.mjs web",
+    "build:pet": "node mascot/build.mjs pet",
+    "build:all": "node mascot/build.mjs web pet",
+    "watch:web": "node mascot/build.mjs web --watch",
+    "harness": "node mascot/build.mjs web --watch & python3 -m http.server 8765"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
+  "dependencies": {
+    "three": "0.160.0"
+  }
+}
