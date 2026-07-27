@@ -259,6 +259,34 @@
     justify-content: center;
   }
   #sound-toggle:hover { background: #eaf0fa; border-color: var(--accent); }
+  /* Segmented control for the default search mode. Three buttons rather than a <select>
+     so the current choice is visible without opening anything -- it changes what happens
+     on every message, so it shouldn't be hidden behind a dropdown. */
+  #mode-pref {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 9px;
+  }
+  #mode-pref .mode-opt {
+    flex: 1;
+    padding: 7px 4px;
+    font-family: inherit;
+    font-size: 0.76rem;
+    color: var(--navy-dark);
+    background: #fff;
+    border: 1px solid #dbe3f0;
+    border-radius: 9px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #mode-pref .mode-opt:hover { background: #f4f8ff; border-color: var(--accent); }
+  #mode-pref .mode-opt[aria-checked="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+  #mode-pref .mode-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   #side p {
     font-size: 0.85rem;
     line-height: 1.5;
@@ -305,6 +333,15 @@
       <div id="ram-hint">drag to rotate</div>
     </div>
     <div class="card">
+      <h2>Search mode</h2>
+      <div id="mode-pref" role="radiogroup" aria-label="Default search mode">
+        <button type="button" class="mode-opt" data-mode="ask" role="radio" aria-checked="true">Ask each time</button>
+        <button type="button" class="mode-opt" data-mode="fast" role="radio" aria-checked="false">Fast</button>
+        <button type="button" class="mode-opt" data-mode="deep" role="radio" aria-checked="false">Deep</button>
+      </div>
+      <p id="mode-pref-hint"></p>
+    </div>
+    <div class="card">
       <h2>About This Chatbot</h2>
       <p>
         This assistant helps Cate students and faculty find books quickly. Ask it for recommendations
@@ -322,8 +359,70 @@
     const sendBtn = document.getElementById('send-btn');
     const clearBtn = document.getElementById('clear-btn');
     const suggestionsEl = document.getElementById('suggestions');
+    const modePrefEl = document.getElementById('mode-pref');
+    const modePrefHint = document.getElementById('mode-pref-hint');
 
     let conversationId = '';
+
+    // ---- Default search mode -------------------------------------------------
+    // The chatflow opens every question by asking fast vs deep, which costs a click before
+    // any answer. Storing a default lets the page answer that prompt automatically so the
+    // common case is one message -> one answer. 'ask' keeps the prompt (the default).
+    const MODE_PREF_KEY = 'search_mode_default';
+    const MODE_HINTS = {
+      ask: 'The assistant asks which mode to use before each search.',
+      fast: 'Skips the prompt and always uses the fast model.',
+      deep: 'Skips the prompt and always uses the deep model, which can take longer.',
+    };
+
+    function getModePref() {
+      const v = localStorage.getItem(MODE_PREF_KEY);
+      return v === 'fast' || v === 'deep' ? v : 'ask';
+    }
+
+    function setModePref(mode) {
+      // Store nothing for 'ask' so the absence of the key means "unset", and a future
+      // rename of the mode ids can't leave a stale value pinned.
+      if (mode === 'ask') localStorage.removeItem(MODE_PREF_KEY);
+      else localStorage.setItem(MODE_PREF_KEY, mode);
+      renderModePref();
+    }
+
+    function renderModePref() {
+      const current = getModePref();
+      modePrefEl.querySelectorAll('.mode-opt').forEach((btn) => {
+        const on = btn.dataset.mode === current;
+        btn.setAttribute('aria-checked', String(on));
+        btn.tabIndex = on ? 0 : -1;
+      });
+      modePrefHint.textContent = MODE_HINTS[current];
+    }
+
+    modePrefEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.mode-opt');
+      if (btn) setModePref(btn.dataset.mode);
+    });
+    renderModePref();
+
+    // ---- Turn tracking -------------------------------------------------------
+    // Auto-submitting the mode prompt makes one visible turn span two network round-trips,
+    // and sendMessage's own cleanup would otherwise re-enable the composer while the
+    // auto-submitted search is still running. Counting in-flight work instead of toggling
+    // the button in each function keeps it disabled until the whole turn is genuinely done.
+    let turnsInFlight = 0;
+
+    function beginTurn() {
+      turnsInFlight += 1;
+      sendBtn.disabled = true;
+    }
+
+    function endTurn() {
+      turnsInFlight = Math.max(0, turnsInFlight - 1);
+      if (turnsInFlight === 0) {
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    }
 
     const SUGGESTION_POOL = [
       'Recommend a book on climate science',
@@ -420,7 +519,7 @@
       }
       if (deep) {
         return elapsedS > 8
-          ? `Deep search running — this takes longer than a fast search... (${elapsedS}s)`
+          ? `Deep search running — this can take a while... (${elapsedS}s)`
           : 'Starting a deep search...';
       }
       return elapsedS > 12 ? `Still working on it... (${elapsedS}s)` : 'Searching the catalog...';
@@ -432,6 +531,25 @@
       conversationId = data.conversation_id || conversationId;
       if (data.requires_action) {
         if (data.answer) addMessage(data.answer, 'bot');
+
+        // Answer the search-mode prompt automatically when a default is set, skipping both
+        // the question bubble and the buttons. The chosen mode still shows up in the wait
+        // copy ("Deep search running..."), so the turn doesn't become silently mysterious.
+        //
+        // Deliberately gated on form_kind === 'mode'. The other pause is the purchase
+        // request, and auto-answering that would file purchase requests on someone's behalf
+        // without them ever seeing the question -- never do that, whatever is stored.
+        //
+        // `offered` guards against the stored id no longer existing: if the flow's actions
+        // get renamed (fast -> quick, say), fall back to showing the prompt rather than
+        // submitting an action Dify will reject.
+        const modePref = getModePref();
+        const offered = (data.actions || []).some((a) => a.id === modePref);
+        if (data.form_kind === 'mode' && modePref !== 'ask' && offered) {
+          submitHumanInput(data.form_token, modePref, data.message_id, data.answer || '', 'mode');
+          return;
+        }
+
         addMessage(data.question || 'Please choose an option:', 'bot');
         renderActionButtons(
           data.actions || [], data.form_token, data.message_id, data.answer || '', data.form_kind
@@ -456,7 +574,7 @@
 
     async function sendMessage(message) {
       addMessage(message, 'user');
-      sendBtn.disabled = true;
+      beginTurn();
       if (suggestionsEl) suggestionsEl.remove();
 
       const typingEl = addMessage('Thinking...', 'typing');
@@ -508,8 +626,9 @@
         addMessage('Could not reach the server: ' + err.message, 'error');
       } finally {
         window.ramMascot?.setTalking(false);
-        sendBtn.disabled = false;
-        input.focus();
+        // Does NOT necessarily re-enable the composer: if this turn auto-submitted the mode
+        // prompt, that follow-up work is still counted in flight and holds the button.
+        endTurn();
       }
     }
 
@@ -578,6 +697,7 @@
 
     async function submitHumanInput(formToken, actionId, messageId, priorAnswer, formKind) {
       const typingEl = addMessage(waitLabel(0, formKind, actionId), 'typing');
+      beginTurn();
       window.ramMascot?.setTalking(true);
       try {
         const res = await fetch('/human-input-submit', {
@@ -608,6 +728,7 @@
         addMessage('Could not reach the server: ' + err.message, 'error');
       } finally {
         window.ramMascot?.setTalking(false);
+        endTurn();
       }
     }
 
