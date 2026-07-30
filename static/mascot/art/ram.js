@@ -56,31 +56,58 @@ const Z = {
 // Limbs
 // ---------------------------------------------------------------------------
 
+// A slab covering the outer third of a segment, clipped to the segment itself. Clipping is
+// what keeps the shading following the silhouette without a second hand-authored path that
+// would have to be kept in sync with the first.
+function drawShade(ctx, path, x1, y1, r0, r1, shade, outward) {
+  clipped(ctx, path, (c) => {
+    c.fillStyle = shade;
+    c.beginPath();
+    const edge = outward * (r0 + 4);
+    c.moveTo(edge, -r0 - 4);
+    c.lineTo(outward * r0 * 0.35, -r0 - 4);
+    c.lineTo(x1 + outward * r1 * 0.35, y1 + r1 + 4);
+    c.lineTo(x1 + edge, y1 + r1 + 4);
+    c.closePath();
+    c.fill();
+  });
+}
+
 /**
  * @param outward  +1 or -1: which side of the limb catches the shade. Front-facing limbs
  *                 shade on their OUTER edge, so this flips per side.
  */
 function limbSegment(x1, y1, r0, r1, fill, shade, outward = 1) {
-  return (ctx) => {
+  return (ctx, _node, pass) => {
     const path = (c) => taperedCapsule(c, 0, 0, r0, x1, y1, r1);
+
+    // `pass` is set only for nodes in an outlineGroup (see render()).
+    //
+    // The stroke is drawn at DOUBLE weight here because the fill pass then covers its inner
+    // half, leaving an outline of the intended thickness. Stroking at LINE.thin would leave a
+    // visibly thinner outline on limbs than everywhere else on the ram.
+    if (pass === 'stroke') {
+      path(ctx);
+      ctx.strokeStyle = PALETTE.ink;
+      ctx.lineWidth = LINE.thin * 2;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      return;
+    }
+    if (pass === 'fill') {
+      path(ctx);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      if (shade) drawShade(ctx, path, x1, y1, r0, r1, shade, outward);
+      return;
+    }
+
+    // Ungrouped: single-shape parts (the legs) keep the simpler fill-then-stroke, which centres
+    // the outline on the edge and needs no weight compensation.
     path(ctx);
     fillStroke(ctx, fill, PALETTE.ink, LINE.thin);
-    if (shade) {
-      clipped(ctx, path, (c) => {
-        c.fillStyle = shade;
-        c.beginPath();
-        // A slab covering the outer third of the segment's bounding area. Clipping to the
-        // capsule is what keeps it following the silhouette without a second hand-authored
-        // path that would have to be kept in sync.
-        const edge = outward * (r0 + 4);
-        c.moveTo(edge, -r0 - 4);
-        c.lineTo(outward * r0 * 0.35, -r0 - 4);
-        c.lineTo(x1 + outward * r1 * 0.35, y1 + r1 + 4);
-        c.lineTo(x1 + edge, y1 + r1 + 4);
-        c.closePath();
-        c.fill();
-      });
-    }
+    if (shade) drawShade(ctx, path, x1, y1, r0, r1, shade, outward);
   };
 }
 
@@ -119,26 +146,39 @@ function buildArm(side) {
   // Set further outboard and angled away from the body. At the first pass's x=+/-50 with a
   // slight inward hang, the sleeves crossed the chest and permanently covered the outer
   // letters of the CATE print -- the one piece of branding on the whole character.
+  // Both sleeve capsules share one outlineGroup, so render() draws them as a single
+  // silhouette. Previously each was independently outlined, so their overlap showed BOTH
+  // outlines as a lens-shaped seam at the elbow -- the thing that made the arm read as a
+  // robot's segmented limb rather than one continuous sleeve.
+  const group = `sleeve_${side}`;
+
   const shoulder = new Node(`arm_${side}_shoulder`, {
-    x: dir * 54, y: -14, rot: dir * 0.16, z: Z.arms,
+    x: dir * 54, y: -14, rot: dir * 0.16, z: Z.arms, outlineGroup: group,
     draw: limbSegment(dir * 5, 30, 13.5, 12, PALETTE.hoodie, PALETTE.hoodieShade, dir),
   });
 
   const elbow = new Node(`arm_${side}_elbow`, {
-    x: dir * 5, y: 30, z: Z.arms,
+    x: dir * 5, y: 30, z: Z.arms, outlineGroup: group,
+    draw: limbSegment(dir * 3, 23, 12, 10.5, PALETTE.hoodie, PALETTE.hoodieShade, dir),
+  });
+
+  // The cuff moved out of the elbow's draw call into its own node. It has to stay OUTSIDE the
+  // sleeve's outline group: it is a different colour and genuinely should show an edge where
+  // it meets the sleeve, and mixing it into the group would have split its own stroke and fill
+  // across the two passes.
+  //
+  // Explicit z ordering rather than relying on tree order, because a group's members must be
+  // contiguous after the z sort -- an ungrouped node landing between them would break the run.
+  const cuff = new Node(`arm_${side}_cuff`, {
+    x: dir * 2.4, y: 19, z: Z.arms + 0.1,
     draw: (ctx) => {
-      limbSegment(dir * 3, 23, 12, 10.5, PALETTE.hoodie, PALETTE.hoodieShade, dir)(ctx);
-      // Ribbed cuff where the sleeve ends.
-      ctx.save();
-      ctx.translate(dir * 2.4, 19);
       roundRect(ctx, -10.5, -4, 21, 9, 3.5);
       fillStroke(ctx, PALETTE.hoodieDark, PALETTE.ink, LINE.hair);
-      ctx.restore();
     },
   });
 
   const hand = new Node(`arm_${side}_hand`, {
-    x: dir * 3, y: 23, z: Z.arms,
+    x: dir * 3, y: 23, z: Z.arms + 0.2,
     draw: (ctx) => {
       // Woolly mitten. A ram has no hands, so this is openly a mascot convention -- but
       // keeping it fleece-coloured ties it to the rest of the wool.
@@ -152,7 +192,7 @@ function buildArm(side) {
   });
 
   shoulder.add(elbow);
-  elbow.add(hand);
+  elbow.add(cuff, hand);
   return shoulder;
 }
 

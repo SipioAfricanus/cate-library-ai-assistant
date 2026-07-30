@@ -52,7 +52,9 @@ export class Node {
     this.restY = this.y;
 
     this.z = opts.z ?? 0;
-    this.draw = opts.draw ?? null;   // (ctx, node) => void, in local space
+    this.draw = opts.draw ?? null;   // (ctx, node, pass) => void, in local space
+    // Nodes sharing an `outlineGroup` are rendered as ONE silhouette -- see render().
+    this.outlineGroup = opts.outlineGroup ?? null;
     this.visible = opts.visible !== false;
     this.alpha = opts.alpha ?? 1;
 
@@ -116,16 +118,47 @@ export function collect(node, out = []) {
  *              setTransform, which REPLACES the current transform instead of composing
  *              with it, so anything already on the context would be silently discarded.
  */
+function paintOne(ctx, p, pass) {
+  const w = p.world;
+  ctx.save();
+  ctx.setTransform(w.a, w.b, w.c, w.d, w.e, w.f);
+  ctx.globalAlpha = p._alpha;
+  p.draw(ctx, p, pass);
+  ctx.restore();
+}
+
 export function render(ctx, root, base = IDENTITY) {
   updateWorld(root, base);
   const parts = collect(root).sort((p, q) => p.z - q.z);
-  for (const p of parts) {
-    const w = p.world;
-    ctx.save();
-    ctx.setTransform(w.a, w.b, w.c, w.d, w.e, w.f);
-    ctx.globalAlpha = p._alpha;
-    p.draw(ctx, p);
-    ctx.restore();
+
+  let i = 0;
+  while (i < parts.length) {
+    const group = parts[i].outlineGroup;
+
+    if (!group) {
+      paintOne(ctx, parts[i], undefined);   // undefined = draw fill and stroke together
+      i += 1;
+      continue;
+    }
+
+    // TWO-PASS SILHOUETTE.
+    //
+    // Drawing each limb segment as its own fully outlined shape means that wherever two
+    // segments overlap you see BOTH outlines, which produces a lens-shaped seam at every
+    // joint -- the reason a cut-out rig reads as a robot rather than a limb.
+    //
+    // Instead: stroke every segment in the group first, then fill every segment on top.
+    // Because all strokes precede all fills, any stroke lying inside the union of the fills
+    // is buried, and only the union's outer boundary survives. One continuous outline.
+    //
+    // Requires the group's members to be CONTIGUOUS after the z sort, which they are: sort is
+    // stable, so equal-z nodes keep tree order, and the parts are given explicit z offsets so
+    // a group is never interleaved with something else.
+    let j = i;
+    while (j < parts.length && parts[j].outlineGroup === group) j += 1;
+    for (let k = i; k < j; k++) paintOne(ctx, parts[k], 'stroke');
+    for (let k = i; k < j; k++) paintOne(ctx, parts[k], 'fill');
+    i = j;
   }
   return parts.length;
 }
