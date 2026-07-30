@@ -81,8 +81,18 @@
 </div>
 
 <script type="module">
-import { createMascot, DESIGN } from '/mascot/src/index.js';
-import { updateWorld, collect } from '/mascot/src/rig/node.js';
+// Versioned PATH, not a query string, and dynamic so the token changes every load.
+//
+// Chrome will otherwise keep serving the module graph from the first load of this page even
+// with no-store response headers, so edits to mascot/src silently do nothing. A `?v=` query
+// only busts the entry module -- relative sub-imports don't inherit it. serve.py strips the
+// /v/<token>/ prefix, and because the version sits in the path, every relative import
+// underneath inherits it and re-fetches too.
+const V = Date.now();
+const [{ createMascot, DESIGN }, { updateWorld, collect }] = await Promise.all([
+  import(`/v/${V}/mascot/src/index.js`),
+  import(`/v/${V}/mascot/src/rig/node.js`),
+]);
 
 const mk = (c, s) => createMascot({
   canvas: document.getElementById(c),

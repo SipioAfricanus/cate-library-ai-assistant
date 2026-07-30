@@ -7,10 +7,17 @@
 // resolution-independent, always crisp, no texture at all.
 import { PALETTE } from './palette.js';
 
+// Plain 5x7 block letterforms.
+//
+// The previous set carried decorative serifs -- C and A both had `11011` rows, which put
+// pixels on BOTH sides with a one-pixel gap. At chest size that gap is sub-pixel, so the
+// serif closed the C's aperture and it rendered as an O or G: the chest read "GATE". The
+// letters are ~17 design units tall here, which is nowhere near enough resolution for
+// decoration; legibility has to win.
 const GLYPHS = {
-  C: ['01110', '11011', '10000', '10000', '10000', '11011', '01110'],
-  A: ['01110', '11011', '10001', '11111', '10001', '10001', '10001'],
-  T: ['11111', '11111', '00100', '00100', '00100', '00100', '00100'],
+  C: ['01110', '10001', '10000', '10000', '10000', '10001', '01110'],
+  A: ['01110', '10001', '10001', '11111', '10001', '10001', '10001'],
+  T: ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
   E: ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
 };
 

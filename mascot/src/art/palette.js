@@ -1,49 +1,57 @@
-// Flat-vector palette.
+// Flat-vector palette, sampled from the Qwen character sheet.
 //
-// Unlike the 3D build these are the FINAL rendered colours -- there is no tone mapping,
-// no environment light and no material response between these values and the screen. That
+// Unlike the 3D build these are the FINAL rendered colours -- there is no tone mapping, no
+// environment light and no material response between these values and the screen. That
 // removes the whole class of "why does the blue look muddy" problem that dogged the 3D
 // version, where the palette had to be pre-compensated for ACES desaturating it.
 //
-// Form comes from three flat tones per material (base / shade / light) rather than from
-// lighting. That is the core trick of the style: shade shapes are drawn as explicit
-// geometry, so they stay crisp at any size and cost nothing.
+// Form comes from two or three flat tones per material rather than from lighting. Shade
+// shapes are drawn as explicit geometry, so they stay crisp at any size and cost nothing.
 export const PALETTE = {
-  hoodie: '#3a6db5',
-  hoodieShade: '#2c568f',
-  hoodieLight: '#5183c9',
-  hoodieDark: '#264a7d',      // sleeves/legs, to separate limbs from the body mass
+  // Deeper and less saturated than the first pass, which used a mid-blue that read as
+  // "generic app blue" next to the reference's collegiate navy.
+  hoodie: '#2f5280',
+  hoodieShade: '#24405f',
+  hoodieLight: '#3d6494',
+  hoodieDark: '#1f3a58',      // hood, cuffs, hem band
 
-  wool: '#f8f4ea',
-  woolShade: '#e4dcc8',
-  woolDeep: '#cfc4aa',
+  // Warm cream. A neutral off-white made the fleece look grey against the navy.
+  wool: '#f8f2e2',
+  woolShade: '#e9dfc7',
+  woolDeep: '#d6c9aa',
 
-  skin: '#dcbba4',            // muzzle and ears
-  skinShade: '#c39e85',
-  nose: '#8d6f61',
+  // Muzzle and inner ear -- peachy, noticeably warmer than the fleece so the face reads
+  // as a distinct patch rather than a lighter part of the same wool mass.
+  skin: '#f7dcbe',
+  skinShade: '#e6c19c',
+  earInner: '#e8a9a2',
 
-  horn: '#dcb86e',
-  hornShade: '#b8964e',
-  hornLight: '#f0d79a',
+  // Bare lower legs: tan, between the fleece and the hoof.
+  leg: '#c8a074',
+  legShade: '#ad8459',
 
-  hoof: '#3b3b47',
-  hoofLight: '#54545f',
+  nose: '#3f3129',
+
+  horn: '#c9a468',
+  hornShade: '#a5814a',
+  hornLight: '#dfc48f',
+
+  hoof: '#4d3a2b',
 
   eyeWhite: '#ffffff',
-  iris: '#c9a24e',
-  pupil: '#1b2331',
+  pupil: '#20303f',
 
-  // A dark navy rather than black: it separates shapes at pet size without the harsh
-  // sticker look pure black gives, and it sits in the same family as the hoodie.
-  ink: '#22344c',
+  // Dark navy rather than black: it separates shapes at pet size without the harsh sticker
+  // look pure black gives, and it sits in the same family as the hoodie.
+  ink: '#1e2f42',
 
-  cate: '#ffffff',
+  cate: '#f4f0e4',
 };
 
 // Outline weight is expressed in DESIGN units, so it scales with the mascot instead of
 // getting relatively fatter as the canvas shrinks.
 export const LINE = {
-  thick: 3.0,
-  thin: 2.0,
-  hair: 1.4,
+  thick: 3.4,
+  thin: 2.4,
+  hair: 1.6,
 };

@@ -57,9 +57,13 @@ export function fleeceBlob(ctx, cx, cy, rx, ry, bumps = 11, depth = 0.17, seed =
     const a0 = i * step;
     const a1 = a0 + step;
     const am = a0 + step / 2;
-    // Deterministic per-bump size variation.
-    const j = 0.82 + 0.36 * ((Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453) % 1 + 1) % 1;
-    const out = 1 + depth * j;
+    // Deterministic per-bump size variation. Written out rather than as a one-liner because
+    // the compact form had a precedence bug: `0.36 * (h % 1) % 1` parses as
+    // `(0.36 * (h % 1)) % 1`, so the trailing modulo was applied to the already-scaled
+    // value and the jitter silently collapsed to a near-constant.
+    const h = Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453;
+    const frac = h - Math.floor(h);
+    const out = 1 + depth * (0.82 + 0.36 * frac);
 
     const x0 = cx + Math.cos(a0) * rx;
     const y0 = cy + Math.sin(a0) * ry;

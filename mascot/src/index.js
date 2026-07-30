@@ -38,24 +38,39 @@ export function createMascot(options = {}) {
     nodes.body.y = Math.sin(t * 1.6) * 2.4;
     nodes.spine.rot = Math.sin(t * 1.6) * 0.014;
     nodes.chest.sy = 1 + Math.sin(t * 1.6) * 0.012;
-    nodes.neck.rot = nodes.neck.restRot + Math.sin(t * 0.47) * 0.06;
-    nodes.head.rot = nodes.head.restRot + Math.sin(t * 0.36) * 0.045;
-    nodes.ear_near.rot = nodes.ear_near.restRot + Math.sin(t * 1.9) * 0.10;
-    nodes.ear_far.rot = nodes.ear_far.restRot + Math.sin(t * 1.9 + 1.1) * 0.08;
+    nodes.neck.rot = nodes.neck.restRot + Math.sin(t * 0.47) * 0.05;
+    nodes.head.rot = nodes.head.restRot + Math.sin(t * 0.36) * 0.035;
+    // Ears flick out of phase with each other, so the two sides never look mechanically
+    // linked.
+    nodes.ear_l.rot = nodes.ear_l.restRot + Math.sin(t * 1.9) * 0.10;
+    nodes.ear_r.rot = nodes.ear_r.restRot - Math.sin(t * 1.9 + 1.1) * 0.09;
 
     // --- blink ----------------------------------------------------------
-    // The lid is a separate node whose alpha is the blink channel, so the eyeball keeps
-    // its own geometry and never gets squashed.
+    // The lids are separate nodes whose alpha is the blink channel, so the eyeballs keep
+    // their own geometry and never get squashed. Both blink together -- a ram winking at
+    // library patrons is not the intended personality.
     if (t > blinkAt) {
       const phase = (t - blinkAt) / 0.16;
       if (phase >= 1) {
-        nodes.eye_lid.alpha = 0;
+        nodes.lid_l.alpha = 0;
+        nodes.lid_r.alpha = 0;
         blinkAt = t + 2.2 + Math.random() * 3.4;
       } else {
-        nodes.eye_lid.alpha = Math.sin(phase * Math.PI) > 0.35 ? 1 : 0;
+        const shut = Math.sin(phase * Math.PI) > 0.35 ? 1 : 0;
+        nodes.lid_l.alpha = shut;
+        nodes.lid_r.alpha = shut;
       }
     }
 
+    paint();
+  }
+
+  // Paint only, with no animation step. Separate from frame() because several callers need
+  // a guaranteed repaint without advancing time: the desktop pet repaints on demand when
+  // idle instead of holding a rAF loop open, and automated checks run in contexts where
+  // rAF does not fire while a script is evaluating -- so without this, a screenshot taken
+  // after changing state silently captures the previous frame.
+  function paint() {
     surface.clear();
     partsDrawn = render(surface.ctx, root, surface.fitMatrix(DESIGN, { anchorY }));
   }
@@ -80,6 +95,9 @@ export function createMascot(options = {}) {
       nodes.wordmark.sx = s;
     },
     getFacing() { return nodes.facing.sx < 0 ? -1 : 1; },
+
+    /** Force an immediate repaint of the current pose. */
+    renderNow: paint,
 
     setPaused: (v) => loop.setPaused(v),
     setMaxFps: (n) => loop.setMaxFps(n),
