@@ -16,7 +16,7 @@ const TAU = Math.PI * 2;
 // `facing.sx` and `wordmark.sx` are owned by setFacing(), and resetting scale wholesale
 // would mirror-flip the ram back every frame.
 const ANIMATED = [
-  'body', 'spine', 'chest', 'neck', 'head', 'skirt',
+  'body', 'spine', 'chest', 'neck', 'head', 'skirt', 'muzzle',
   'leg_l_hip', 'leg_l_ankle', 'leg_r_hip', 'leg_r_ankle',
   'arm_l_shoulder', 'arm_l_elbow', 'arm_r_shoulder', 'arm_r_elbow',
   'ear_l', 'ear_r',
@@ -31,6 +31,7 @@ export function resetPose(n) {
     node.y = node.restY;
   }
   if (n.chest) n.chest.sy = 1;
+  if (n.muzzle) n.muzzle.sy = 1;
   if (n.shadow) n.shadow.scaleHint = 1;
 }
 
@@ -132,4 +133,85 @@ export function applyWalk(n, p, w = 1) {
   // Contact shadow tightens as the body rises. The shadow is not parented to the body, so
   // this is what couples them -- and it's most of what sells the ram touching the ground.
   if (n.shadow) n.shadow.scaleHint = 1 - 0.20 * bob * w;
+}
+
+// ---------------------------------------------------------------------------
+// Sleep -- a BASE pose, replacing idle/walk rather than layering over them.
+// ---------------------------------------------------------------------------
+
+export function applySleep(n, t, w = 1) {
+  if (w <= 0) return;
+  // Settle down, head dropped and tilted, ears flopped forward.
+  n.body.y += 6 * w;
+  n.spine.rot += 0.05 * w;
+  n.neck.rot += 0.30 * w;
+  n.head.rot += 0.10 * w;
+  n.ear_l.rot += 0.45 * w;
+  n.ear_r.rot += -0.45 * w;
+  // Slow, deep breathing -- roughly a third the idle rate and three times the depth, which
+  // is most of what distinguishes "asleep" from "standing still".
+  n.chest.sy += Math.sin(t * 0.55) * 0.035 * w;
+  n.body.y += Math.sin(t * 0.55) * 2.2 * w;
+  if (n.shadow) n.shadow.scaleHint = 1 + 0.06 * w;
+}
+
+// ---------------------------------------------------------------------------
+// Overlays -- ADDITIVE on top of whatever base pose is active, so the ram can
+// talk while idling or celebrate mid-stride without the poses fighting.
+// ---------------------------------------------------------------------------
+
+export function applyTalk(n, t, w = 1) {
+  if (w <= 0) return;
+  // Rhythmic nod plus a squashing muzzle. There is no separate jaw node -- the mouth is
+  // drawn inside the muzzle -- so scaling the muzzle vertically pulses the whole lower face,
+  // which reads as speech at panel size for a fraction of the complexity of a real jaw.
+  const beat = Math.sin(t * 9.0);
+  n.muzzle.sy += beat * 0.055 * w;
+  n.neck.rot += Math.sin(t * 4.5) * 0.045 * w;
+  n.head.y += -Math.abs(beat) * 1.2 * w;
+  // Ears perk up and twitch: engaged rather than dozing.
+  n.ear_l.rot += (-0.12 + Math.sin(t * 6.1) * 0.05) * w;
+  n.ear_r.rot += (0.12 - Math.sin(t * 6.1) * 0.05) * w;
+}
+
+/**
+ * One-shot. `u` is normalised progress 0..1 through the gesture; callers stop applying it
+ * once u passes 1.
+ */
+export function applyCelebrate(n, u, w = 1) {
+  if (w <= 0) return;
+  // Two decaying hops. sin(pi*..) shapes each hop so the ram leaves and returns to the
+  // ground rather than ending mid-air, and the decay keeps the second smaller than the first.
+  const decay = 1 - u;
+  const hop = Math.abs(Math.sin(u * Math.PI * 2)) * decay;
+  n.body.y += -26 * hop * w;
+  n.chest.sy += 0.05 * hop * w;
+  // Arms thrown up and out.
+  n.arm_l_shoulder.rot += -1.05 * hop * w;
+  n.arm_r_shoulder.rot += 1.05 * hop * w;
+  n.arm_l_elbow.rot += -0.35 * hop * w;
+  n.arm_r_elbow.rot += 0.35 * hop * w;
+  // Head tips back, ears fly up.
+  n.neck.rot += -0.16 * hop * w;
+  n.ear_l.rot += -0.55 * hop * w;
+  n.ear_r.rot += 0.55 * hop * w;
+  n.skirt.rot += Math.sin(u * Math.PI * 4) * 0.06 * decay * w;
+  if (n.shadow) n.shadow.scaleHint = 1 - 0.35 * hop * w;
+}
+
+/** One-shot. `u` is normalised progress 0..1 through the gesture. */
+export function applySad(n, u, w = 1) {
+  if (w <= 0) return;
+  // Ease in, hold, ease out -- a slump that arrives and recovers, rather than a twitch.
+  const env = Math.sin(Math.min(1, u) * Math.PI) ** 0.6;
+  n.body.y += 7 * env * w;
+  n.spine.rot += 0.045 * env * w;
+  n.neck.rot += 0.34 * env * w;      // head hangs
+  n.head.rot += 0.05 * env * w;
+  n.chest.sy += -0.035 * env * w;    // chest deflates
+  n.ear_l.rot += 0.52 * env * w;     // ears droop
+  n.ear_r.rot += -0.52 * env * w;
+  // Arms hang slack, closer to the body.
+  n.arm_l_shoulder.rot += 0.14 * env * w;
+  n.arm_r_shoulder.rot += -0.14 * env * w;
 }

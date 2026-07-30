@@ -8,7 +8,9 @@ import { createSurface } from './engine/canvas.js';
 import { createLoop } from './engine/loop.js';
 import { render } from './rig/node.js';
 import { buildRam, DESIGN } from './art/ram.js';
-import { resetPose, applyIdle, applyWalk } from './anim/poses.js';
+import {
+  resetPose, applyIdle, applyWalk, applySleep, applyTalk, applyCelebrate, applySad,
+} from './anim/poses.js';
 
 export function createMascot(options = {}) {
   const {
@@ -31,23 +33,57 @@ export function createMascot(options = {}) {
   let partsDrawn = 0;
 
   // --- state machine -------------------------------------------------------
-  let state = 'idle';           // 'idle' | 'walk'
-  let walkWeight = 0;           // eased 0..1, so state changes don't snap
+  //
+  // Two layers, because they compose differently:
+  //
+  //   BASE     idle | walk | sleep -- mutually exclusive posture. These replace each other,
+  //            so their weights are complementary and idle fills whatever is left over.
+  //   OVERLAY  talk | celebrate | sad -- additive gestures layered on top of the base, so the
+  //            ram can talk while idling or celebrate mid-stride without the poses fighting
+  //            over the same channels.
+  //
+  // Collapsing these into one exclusive state would mean a talking ram stops breathing.
+  let base = 'idle';            // 'idle' | 'walk' | 'sleep'
+  let walkW = 0;
+  let sleepW = 0;
   let walkPhase = 0;            // cycle position in [0,1)
   let walkSpeed = 1.15;         // cycles per second
+
+  // One-shot overlays carry their own clock and retire themselves; `talk` runs until cleared.
+  const overlay = {
+    talk: { w: 0, on: false, t: 0, dur: null },
+    celebrate: { w: 0, on: false, t: 0, dur: 1.6 },
+    sad: { w: 0, on: false, t: 0, dur: 1.9 },
+  };
+
+  const ease = (cur, target, dt, tau) => cur + (target - cur) * Math.min(1, dt / tau);
 
   function frame(dt) {
     t += dt;
 
-    // Ease the blend rather than switching hard. ~0.22s is short enough to feel responsive
-    // and long enough that the legs don't visibly jump into the cycle.
-    const target = state === 'walk' ? 1 : 0;
-    walkWeight += (target - walkWeight) * Math.min(1, dt / 0.22);
-    if (walkWeight > 0.001) walkPhase = (walkPhase + dt * walkSpeed) % 1;
+    // Ease rather than switching hard. ~0.22s is short enough to feel responsive and long
+    // enough that the legs don't visibly jump into the cycle.
+    walkW = ease(walkW, base === 'walk' ? 1 : 0, dt, 0.22);
+    sleepW = ease(sleepW, base === 'sleep' ? 1 : 0, dt, 0.55);   // slower: waking is gradual
+    if (walkW > 0.001) walkPhase = (walkPhase + dt * walkSpeed) % 1;
+
+    for (const o of Object.values(overlay)) {
+      if (o.on) {
+        o.t += dt;
+        if (o.dur !== null && o.t >= o.dur) o.on = false;   // one-shot retires itself
+      }
+      o.w = ease(o.w, o.on ? 1 : 0, dt, 0.18);
+    }
 
     resetPose(nodes);
-    applyIdle(nodes, t, 1 - walkWeight);
-    applyWalk(nodes, walkPhase, walkWeight);
+    // Idle is the base layer and takes whatever weight walk and sleep aren't using, so
+    // breathing never fully stops.
+    applyIdle(nodes, t, Math.max(0, 1 - walkW - sleepW));
+    applyWalk(nodes, walkPhase, walkW);
+    applySleep(nodes, t, sleepW);
+    applyTalk(nodes, overlay.talk.t, overlay.talk.w);
+    applyCelebrate(nodes, overlay.celebrate.dur ? overlay.celebrate.t / overlay.celebrate.dur : 0, overlay.celebrate.w);
+    applySad(nodes, overlay.sad.dur ? overlay.sad.t / overlay.sad.dur : 0, overlay.sad.w);
     applyBlink();
     paint();
   }
@@ -55,6 +91,13 @@ export function createMascot(options = {}) {
   // Blink is independent of the pose blend: it drives lid ALPHA, not a transform channel, so
   // it neither needs resetting nor interferes with idle/walk being mixed.
   function applyBlink() {
+    // Asleep, the eyes simply stay shut -- and this must be checked before the timer, or a
+    // sleeping ram would periodically blink its already-closed eyes open.
+    if (sleepW > 0.5) {
+      nodes.lid_l.alpha = 1;
+      nodes.lid_r.alpha = 1;
+      return;
+    }
     if (t <= blinkAt) return;
     const phase = (t - blinkAt) / 0.16;
     if (phase >= 1) {
@@ -88,7 +131,11 @@ export function createMascot(options = {}) {
     surface,
     stats: () => ({
       parts: partsDrawn, w: surface.width, h: surface.height, dpr: surface.dpr,
-      state, walkWeight: +walkWeight.toFixed(4), walkPhase: +walkPhase.toFixed(4),
+      base, walkW: +walkW.toFixed(4), sleepW: +sleepW.toFixed(4),
+      walkPhase: +walkPhase.toFixed(4),
+      talkW: +overlay.talk.w.toFixed(4),
+      celebrateW: +overlay.celebrate.w.toFixed(4),
+      sadW: +overlay.sad.w.toFixed(4),
     }),
 
     /**
@@ -117,10 +164,23 @@ export function createMascot(options = {}) {
      */
     step(dt = 1 / 60) { frame(dt); },
 
-    /** 'idle' | 'walk'. Blends over ~0.22s rather than switching instantly. */
-    setState(next) { state = next; },
-    getState: () => state,
+    /** Base posture: 'idle' | 'walk' | 'sleep'. Blends rather than switching instantly. */
+    setBase(next) { base = next; },
+    getBase: () => base,
+    /** Kept as an alias so existing callers and the harness don't need updating. */
+    setState(next) { base = next; },
+    getState: () => base,
     setWalkSpeed(cyclesPerSecond) { walkSpeed = Math.max(0.05, cyclesPerSecond); },
+
+    // --- overlay gestures ---
+    /** Continuous: runs until switched off. Mirrors the old ram.js API. */
+    setTalking(on) {
+      overlay.talk.on = !!on;
+      if (on) overlay.talk.t = 0;
+    },
+    /** One-shot; retires itself after its duration. */
+    celebrate() { overlay.celebrate.on = true; overlay.celebrate.t = 0; },
+    sad() { overlay.sad.on = true; overlay.sad.t = 0; },
 
     /**
      * Pose at an exact point in a cycle and repaint, bypassing time entirely.
