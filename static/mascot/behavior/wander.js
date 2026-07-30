@@ -18,7 +18,13 @@ const DEFAULTS = {
   idleMin: 2.4,               // seconds
   idleMax: 7.0,
   minTripUnits: 90,           // don't bother with trips shorter than this
-  sleepAfter: 42,             // seconds of accumulated idling before dozing off
+  // Seconds since the last user interaction before dozing off.
+  //
+  // KEEP THIS COMFORTABLY ABOVE idleMax. The pet only checks for sleep while idle, and it
+  // waits out an idle timer of up to idleMax before setting off anywhere -- so a sleepAfter
+  // below idleMax means it can doze before that timer ever fires and will never take a single
+  // step. Verified: at sleepAfter 5 with idleMax 7 it never walks at all.
+  sleepAfter: 42,
   startX: null,
 };
 
@@ -30,7 +36,14 @@ export function createWander(options = {}) {
   let mode = 'idle';          // 'idle' | 'walk' | 'sleep'
   let timer = randIdle();
   let target = x;
-  let idleAccum = 0;
+  // Time since the last USER INTERACTION, not since the last time it stood still.
+  //
+  // This started as an idle-time accumulator that reset whenever a trip completed, and that
+  // made sleep unreachable: idle spells are capped at idleMax (7s) and a trip always follows,
+  // so the counter could never approach sleepAfter (42s). Ten simulated minutes produced no
+  // sleep at all. Wandering is what the pet DOES while awake, so it must not count as
+  // activity -- only wake()/halt(), which the host calls on real interaction, reset this.
+  let sinceInteraction = 0;
 
   function randIdle() {
     return cfg.idleMin + Math.random() * (cfg.idleMax - cfg.idleMin);
@@ -53,10 +66,14 @@ export function createWander(options = {}) {
   return {
     /** Advance the behaviour. Returns the state the host should reflect. */
     update(dt) {
+      // Accumulates in EVERY mode, including while walking -- see the note on the declaration.
+      if (mode !== 'sleep') sinceInteraction += dt;
+
       if (mode === 'idle') {
         timer -= dt;
-        idleAccum += dt;
-        if (idleAccum >= cfg.sleepAfter) {
+        // Gated on being idle so the pet finishes its trip rather than dropping asleep
+        // mid-stride, which would leave it lying in an arbitrary spot.
+        if (sinceInteraction >= cfg.sleepAfter) {
           mode = 'sleep';
         } else if (timer <= 0) {
           target = pickTarget();
@@ -76,7 +93,9 @@ export function createWander(options = {}) {
           x = target;
           mode = 'idle';
           timer = randIdle();
-          idleAccum = 0;
+          // Deliberately does NOT reset sinceInteraction: finishing a walk is the pet's own
+          // activity, not the user's, and resetting here is exactly what made sleep
+          // unreachable.
         }
         x = Math.min(cfg.bounds.max, Math.max(cfg.bounds.min, x));
       }
@@ -96,7 +115,7 @@ export function createWander(options = {}) {
         mode = 'idle';
         timer = randIdle();
       }
-      idleAccum = 0;
+      sinceInteraction = 0;
     },
 
     /** Stop where it stands -- used while a click is being handled. */
@@ -106,7 +125,7 @@ export function createWander(options = {}) {
         mode = 'idle';
         timer = randIdle();
       }
-      idleAccum = 0;
+      sinceInteraction = 0;
     },
 
     setBounds(min, max) {
