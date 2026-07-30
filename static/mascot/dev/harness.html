@@ -89,8 +89,13 @@
     <h2>wander &mdash; roams, turns around, dozes off</h2>
     <div id="track" class="checker"
          style="position:relative;height:210px;border-radius:10px;overflow:hidden">
+      <!-- The canvas needs explicit CSS sizing. Without it the browser uses the canvas's
+           intrinsic width/height ATTRIBUTES, which createSurface sets in device pixels
+           (190 x dpr 2 = 380) -- so it rendered at double size and overflowed the box,
+           cropped to the ram's head. Every other stage on this page gets this from
+           `.stage canvas`, which #petbox is not. -->
       <div id="petbox" style="position:absolute;top:0;width:190px;height:190px">
-        <canvas id="cPet"></canvas>
+        <canvas id="cPet" style="width:100%;height:100%;display:block"></canvas>
       </div>
     </div>
     <div style="display:flex;gap:14px;align-items:center;margin-top:8px">

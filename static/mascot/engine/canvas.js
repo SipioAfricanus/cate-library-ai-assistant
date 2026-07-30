@@ -8,11 +8,24 @@
 // website panel shows a CSS gradient through the canvas, and the desktop overlay window is
 // transparent. Nothing may ever paint an opaque background.
 
-export function createSurface(canvas, container) {
+/**
+ * @param onResize  called after the surface is re-sized by the ResizeObserver (never for the
+ *                  initial synchronous measure, which happens before the caller can paint).
+ *
+ * THIS CALLBACK IS LOAD-BEARING, not a convenience. Assigning canvas.width/height CLEARS the
+ * bitmap, so any resize wipes the current frame. A running instance repaints on its next
+ * animation frame and nobody notices -- but a PAUSED one never does, and is left blank
+ * forever. That's not hypothetical: the harness's filmstrip is built from paused instances
+ * painted once at construction, when their containers still measured zero. The observer then
+ * fired with the real size, erased all eight, and they stayed empty. The same would strand a
+ * desktop pet that resizes while paused.
+ */
+export function createSurface(canvas, container, onResize) {
   const ctx = canvas.getContext('2d', { alpha: true });
   let dpr = 1;
   let cssW = 1;
   let cssH = 1;
+  let ready = false;
 
   function resize() {
     const host = container || canvas.parentElement || canvas;
@@ -23,11 +36,15 @@ export function createSurface(canvas, container) {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
+    if (ready) onResize?.();
   }
 
   const ro = new ResizeObserver(resize);
   ro.observe(container || canvas);
   resize();
+  // Only now is the caller in a position to repaint, so arm the callback after the first
+  // measure. ResizeObserver's own first delivery is async and lands after this.
+  ready = true;
 
   return {
     ctx,

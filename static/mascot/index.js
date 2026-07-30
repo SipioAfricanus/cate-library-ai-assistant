@@ -24,7 +24,10 @@ export function createMascot(options = {}) {
 
   if (!canvas) throw new Error('createMascot: `canvas` is required');
 
-  const surface = createSurface(canvas, container);
+  // Repaint on resize. `paint` is a hoisted function declaration, so referencing it here
+  // before its definition is fine. Without this a paused instance goes blank on any resize,
+  // because assigning canvas.width clears the bitmap -- see createSurface's note.
+  const surface = createSurface(canvas, container, () => paint());
   const { root, nodes } = buildRam();
   nodes.facing.sx = facing;
 
