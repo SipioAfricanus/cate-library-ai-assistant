@@ -56,6 +56,8 @@
   </label>
   <button id="flip">Flip facing</button>
   <button id="pause">Pause</button>
+  <label><input type="checkbox" id="walk"> walk</label>
+  <label>speed <input type="range" id="speed" min="0.3" max="3" step="0.05" value="1.15"><span id="speedV">1.15</span></label>
   <label><input type="checkbox" id="bones"> show pivots</label>
 </header>
 
@@ -77,6 +79,16 @@
     <h2>120px &mdash; silhouette</h2>
     <div class="stage checker" id="s120"><canvas id="c120"></canvas></div>
     <pre>does it still read as a ram?</pre>
+  </div>
+
+  <!-- One walk cycle, scrubbed to eight evenly spaced phases.
+       Reviewing a cycle as stills beats watching it play: a hitch or a leg that never
+       leaves the ground is obvious in a strip and easy to miss at speed. It also makes the
+       cycle inspectable where requestAnimationFrame doesn't run. -->
+  <div class="card" style="flex-basis:100%">
+    <h2>walk cycle &mdash; one full cycle, 8 phases</h2>
+    <div id="strip" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+    <pre>legs should alternate; body should rise twice per cycle</pre>
   </div>
 </div>
 
@@ -101,9 +113,39 @@ const mk = (c, s) => createMascot({
 });
 
 const rams = [mk('cBig','sBig'), mk('c300','s300'), mk('c200','s200'), mk('c120','s120')];
-window.__ram = { rams, big: rams[0], DESIGN };
 
 const $ = (id) => document.getElementById(id);
+
+// --- filmstrip: one instance per phase, each paused and scrubbed ---------------
+const STRIP_FRAMES = 8;
+const strip = [];
+for (let i = 0; i < STRIP_FRAMES; i++) {
+  const cell = document.createElement('div');
+  cell.className = 'stage checker';
+  cell.style.cssText = 'width:150px;height:150px;position:relative';
+  const cv = document.createElement('canvas');
+  cell.appendChild(cv);
+  const tag = document.createElement('div');
+  tag.textContent = (i / STRIP_FRAMES).toFixed(3);
+  tag.style.cssText = 'position:absolute;left:4px;bottom:2px;font:10px ui-monospace;opacity:.55';
+  cell.appendChild(tag);
+  $('strip').appendChild(cell);
+
+  const r = createMascot({ canvas: cv, container: cell, visibilityPolicy: 'never' });
+  r.setPaused(true);                       // scrubbed explicitly, never ticked
+  r.scrub({ state: 'walk', phase: i / STRIP_FRAMES });
+  strip.push(r);
+}
+
+function repaintStrip() {
+  strip.forEach((r, i) => r.scrub({ state: 'walk', phase: i / STRIP_FRAMES }));
+}
+function repaintAll() {
+  rams.forEach((r) => r.renderNow());
+  repaintStrip();
+}
+
+window.__ram = { rams, strip, big: rams[0], DESIGN, repaintAll, repaintStrip, STRIP_FRAMES };
 
 $('bg').onchange = (e) => {
   document.querySelectorAll('.stage').forEach((s) => {
@@ -112,7 +154,21 @@ $('bg').onchange = (e) => {
   });
 };
 
-$('flip').onclick = () => rams.forEach((r) => r.setFacing(-r.getFacing()));
+$('flip').onclick = () => {
+  rams.forEach((r) => r.setFacing(-r.getFacing()));
+  strip.forEach((r) => r.setFacing(rams[0].getFacing()));
+  repaintAll();
+};
+
+$('walk').onchange = (e) => {
+  rams.forEach((r) => r.setState(e.target.checked ? 'walk' : 'idle'));
+};
+
+$('speed').oninput = (e) => {
+  const v = parseFloat(e.target.value);
+  $('speedV').textContent = v.toFixed(2);
+  rams.forEach((r) => r.setWalkSpeed(v));
+};
 
 let paused = false;
 $('pause').onclick = () => {
