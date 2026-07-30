@@ -4,14 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cate Library AI Assistant</title>
-<script type="importmap">
-{
-  "imports": {
-    "three": "{{ url_for('static', filename='vendor/three/three.module.js') }}",
-    "three/addons/controls/OrbitControls.js": "{{ url_for('static', filename='vendor/three/OrbitControls.js') }}"
-  }
-}
-</script>
 <style>
   :root {
     --navy: #2667a5;
@@ -224,13 +216,14 @@
     background: linear-gradient(180deg, #f3f8ff 0%, #e3ecfa 100%);
     overflow: hidden;
   }
+  /* grab/grabbing cursors removed with the 3D build -- there is nothing to drag-rotate in a
+     2D mascot, and a grab cursor on a click target is a false affordance. */
   #ram-canvas {
     width: 100%;
     height: 100%;
     display: block;
-    cursor: grab;
+    cursor: pointer;
   }
-  #ram-canvas:active { cursor: grabbing; }
   #ram-hint {
     position: absolute;
     left: 10px;
@@ -330,7 +323,7 @@
     <div id="ram-stage">
       <canvas id="ram-canvas"></canvas>
       <button id="sound-toggle" type="button" title="Toggle ram sounds" aria-label="Toggle ram sounds">🔇</button>
-      <div id="ram-hint">drag to rotate</div>
+      <div id="ram-hint">click me</div>
     </div>
     <div class="card">
       <h2>Search mode</h2>
@@ -758,6 +751,8 @@
       location.reload();
     });
   </script>
-  <script type="module" src="{{ url_for('static', filename='ram.js') }}"></script>
+  <!-- 2D mascot. No importmap and no bundle: it has zero dependencies, so the browser loads
+       the source modules directly and Vercel serves them straight from static/. -->
+  <script type="module" src="{{ url_for('static', filename='mascot/entries/web.js') }}"></script>
 </body>
 </html>

@@ -5,10 +5,11 @@
 <title>Ram 2D harness</title>
 <!--
   No importmap and no build step: the 2D mascot has zero dependencies, so the source
-  loads directly as ES modules. Serve the project root and open this file:
+  loads directly as ES modules -- and because it lives under static/, the exact same files
+  are what production serves. Run:
 
-      python3 -m http.server 8765
-      http://localhost:8765/mascot/dev/harness.html
+      python3 static/mascot/dev/serve.py
+      http://localhost:8765/static/mascot/dev/harness.html
 
   NO SOUND ANYWHERE ON THIS PAGE. Audio is not wired up yet, and when it is it will
   default to off behind an explicit toggle -- which this page will not include.
@@ -81,6 +82,24 @@
     <pre>does it still read as a ram?</pre>
   </div>
 
+  <!-- Wander demo. The track stands in for the screen edge the desktop pet will roam along;
+       Electron will move the WINDOW along the same axis using the identical behaviour module,
+       which is the point of wander.js knowing nothing about its host. -->
+  <div class="card" style="flex-basis:100%">
+    <h2>wander &mdash; roams, turns around, dozes off</h2>
+    <div id="track" class="checker"
+         style="position:relative;height:210px;border-radius:10px;overflow:hidden">
+      <div id="petbox" style="position:absolute;top:0;width:190px;height:190px">
+        <canvas id="cPet"></canvas>
+      </div>
+    </div>
+    <div style="display:flex;gap:14px;align-items:center;margin-top:8px">
+      <label><input type="checkbox" id="wanderOn"> enable wandering</label>
+      <button id="wakeBtn">poke (wake)</button>
+      <pre id="wanderStat" style="margin:0"></pre>
+    </div>
+  </div>
+
   <!-- One walk cycle, scrubbed to eight evenly spaced phases.
        Reviewing a cycle as stills beats watching it play: a hitch or a leg that never
        leaves the ground is obvious in a strip and easy to miss at speed. It also makes the
@@ -101,9 +120,10 @@
 // /v/<token>/ prefix, and because the version sits in the path, every relative import
 // underneath inherits it and re-fetches too.
 const V = Date.now();
-const [{ createMascot, DESIGN }, { updateWorld, collect }] = await Promise.all([
-  import(`/v/${V}/mascot/src/index.js`),
-  import(`/v/${V}/mascot/src/rig/node.js`),
+const [{ createMascot, DESIGN }, { updateWorld, collect }, { createWander }] = await Promise.all([
+  import(`/v/${V}/static/mascot/index.js`),
+  import(`/v/${V}/static/mascot/rig/node.js`),
+  import(`/v/${V}/static/mascot/behavior/wander.js`),
 ]);
 
 const mk = (c, s) => createMascot({
@@ -200,6 +220,56 @@ setInterval(() => {
   const s = rams[0].stats();
   $('stats').textContent = `parts drawn: ${s.parts}   surface: ${s.w}x${s.h} @${s.dpr}x`;
 }, 500);
+
+// --- wander demo --------------------------------------------------------------
+// The pet drives its own position; the host (here, absolute CSS left) just reflects it.
+// Electron will reflect the same number by moving the window instead.
+const petbox = $('petbox');
+const track = $('track');
+const pet = createMascot({
+  canvas: $('cPet'), container: petbox, visibilityPolicy: 'never',
+});
+pet.setPaused(true);   // stepped by the wander loop below, not by its own rAF
+
+const PET_W = 190;
+const wander = createWander({
+  bounds: { min: 0, max: Math.max(1, track.clientWidth - PET_W) },
+  speed: 52, strideUnits: 40, startX: 40, sleepAfter: 16,
+});
+new ResizeObserver(() => wander.setBounds(0, Math.max(1, track.clientWidth - PET_W)))
+  .observe(track);
+
+let wanderOn = false;
+$('wanderOn').onchange = (e) => { wanderOn = e.target.checked; };
+$('wakeBtn').onclick = () => wander.wake();
+// Clicking the pet is what will open the website from the desktop build; here it just wakes
+// and cheers, so the interaction is at least verifiable.
+$('cPet').style.cursor = 'pointer';
+$('cPet').onclick = () => { wander.wake(); wander.halt(); pet.celebrate(); };
+
+// Exposed so this can be driven deterministically where requestAnimationFrame doesn't fire.
+function stepWander(dt) {
+  const s = wander.update(dt);
+  petbox.style.left = `${s.x}px`;
+  pet.setBase(s.base);
+  pet.setFacing(s.facing);
+  pet.setWalkSpeed(s.cyclesPerSecond);
+  pet.step(dt);
+  $('wanderStat').textContent =
+    `x=${s.x.toFixed(0)}  facing=${s.facing > 0 ? 'right' : 'left'}  ${s.base}`;
+  return s;
+}
+window.__ram.stepWander = stepWander;
+window.__ram.wander = wander;
+window.__ram.pet = pet;
+
+let lastT = performance.now();
+(function wanderLoop(now) {
+  requestAnimationFrame(wanderLoop);
+  const dt = Math.min(0.1, ((now || performance.now()) - lastT) / 1000);
+  lastT = now || performance.now();
+  if (wanderOn) stepWander(dt);
+})();
 </script>
 </body>
 </html>

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Dev server for the mascot harness.
 
-    python3 mascot/dev/serve.py
-    -> http://localhost:8765/mascot/dev/harness.html
+    python3 static/mascot/dev/serve.py
+    -> http://localhost:8765/static/mascot/dev/harness.html
 
 Exists for exactly one reason: `python3 -m http.server` sends no cache headers, so browsers
 cache the ES modules aggressively. Editing mascot/src and reloading then silently serves the
@@ -16,7 +16,10 @@ import os
 import sys
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+# Three levels up: static/mascot/dev -> repo root. Serving the repo root (rather than
+# static/) keeps harness URLs identical to the paths Flask and Vercel serve in production,
+# so an import that works here works there.
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):

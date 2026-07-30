@@ -10,8 +10,16 @@
 # static/vendor/ and is committed as a build artifact -- Vercel runs no Node build step.
 node_modules/
 desktop/
-mascot/
 venv/
+
+# The 2D mascot DOES deploy -- it lives under static/ and is served directly as ES modules
+# with no build step. Only its dev harness is excluded.
+#
+# Note the leading slash matters nowhere here anymore, but it did: an unanchored `mascot/`
+# entry (which is what this file used to carry, from when the 3D module lived at the repo
+# root) matches a directory of that name at ANY depth, so it would silently exclude
+# static/mascot/ and ship a site whose mascot 404s.
+static/mascot/dev/
 
 # Local tooling and scratch
 .git/

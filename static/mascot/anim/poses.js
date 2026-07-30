@@ -74,11 +74,20 @@ export function applyWalk(n, p, w = 1) {
   n.body.x += 3.0 * sway * w;
   n.spine.rot += 0.030 * sway * w;           // roll toward the planted foot
 
-  // Forward lean, kept deliberately small. At 0.055 it combined with the sway roll above to
-  // tilt the whole figure over, so the ram read as lurching sideways rather than walking.
-  // Constant on purpose: mirroring the rig negates rotation, so the lean automatically points
-  // whichever way the ram faces without the pose needing to know.
-  n.chest.rot += 0.022 * w;
+  // Directional cue. These three are the ONLY thing that tells a viewer which way a
+  // front-facing character is heading: mirroring a near-symmetric ram is almost invisible on
+  // its own -- only the shading side swaps -- so without a lean, a pet crossing the screen
+  // looks like it's sliding sideways rather than walking.
+  //
+  // All constants, never phase-driven, so mirroring the rig negates them and the lean
+  // automatically points whichever way the ram faces without the pose knowing which that is.
+  //
+  // Kept modest and split across three channels rather than piled into one big rotation: an
+  // earlier single 0.055 lean on the chest compounded with the sway roll below and tipped the
+  // whole figure over, which read as lurching.
+  n.chest.rot += 0.035 * w;
+  n.head.x += 3.5 * w;        // head leads into the direction of travel
+  n.neck.rot += 0.028 * w;
 
   // --- legs, half a cycle apart ---
   for (const [side, off] of [['l', 0], ['r', 0.5]]) {
@@ -186,11 +195,17 @@ export function applyCelebrate(n, u, w = 1) {
   const hop = Math.abs(Math.sin(u * Math.PI * 2)) * decay;
   n.body.y += -26 * hop * w;
   n.chest.sy += 0.05 * hop * w;
-  // Arms thrown up and out.
-  n.arm_l_shoulder.rot += -1.05 * hop * w;
-  n.arm_r_shoulder.rot += 1.05 * hop * w;
-  n.arm_l_elbow.rot += -0.35 * hop * w;
-  n.arm_r_elbow.rot += 0.35 * hop * w;
+  // Arms thrown up and OUT.
+  //
+  // Sign convention, which is easy to get backwards and did start out that way here: an arm
+  // hangs along +y, and canvas rotation is clockwise-positive. So rotating the LEFT arm
+  // positive swings its hand toward -x, away from the body; negative swings it inward across
+  // the chest. First pass had these flipped, so the arms met in the middle and the ram looked
+  // like it was praying -- and the hands covered the CATE print while doing it.
+  n.arm_l_shoulder.rot += 1.05 * hop * w;
+  n.arm_r_shoulder.rot += -1.05 * hop * w;
+  n.arm_l_elbow.rot += 0.35 * hop * w;
+  n.arm_r_elbow.rot += -0.35 * hop * w;
   // Head tips back, ears fly up.
   n.neck.rot += -0.16 * hop * w;
   n.ear_l.rot += -0.55 * hop * w;
@@ -211,7 +226,8 @@ export function applySad(n, u, w = 1) {
   n.chest.sy += -0.035 * env * w;    // chest deflates
   n.ear_l.rot += 0.52 * env * w;     // ears droop
   n.ear_r.rot += -0.52 * env * w;
-  // Arms hang slack, closer to the body.
-  n.arm_l_shoulder.rot += 0.14 * env * w;
-  n.arm_r_shoulder.rot += -0.14 * env * w;
+  // Arms hang slack, tucked IN toward the body -- negative on the left, per the sign
+  // convention noted in applyCelebrate.
+  n.arm_l_shoulder.rot += -0.14 * env * w;
+  n.arm_r_shoulder.rot += 0.14 * env * w;
 }
