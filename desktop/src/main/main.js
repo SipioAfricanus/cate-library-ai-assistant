@@ -104,7 +104,21 @@ function createPet() {
     y: Math.round(b.maxY * 0.75),
     width: PET_W, height: PET_H,
   });
-  petWin.loadURL('app://local/desktop/src/renderer/pet.html');
+
+  // Computed from __dirname/ROOT rather than the literal string 'app://local/desktop/...'.
+  //
+  // This bit for real: in a dev checkout __dirname sits under a folder literally named
+  // `desktop`, but electron-builder's packaged output (asar:false) unpacks the app's own
+  // files under `Resources/app`, not `Resources/desktop`. A hardcoded 'desktop/...' URL
+  // 404'd as ERR_FILE_NOT_FOUND the moment this ran from a built .app -- confirmed by
+  // actually launching the packaged build, not by inspection. Deriving the path from
+  // __dirname's real position relative to ROOT is correct regardless of what any packager
+  // ever calls the enclosing folder, which closes off the whole class of bug rather than
+  // just this one instance of it.
+  const rendererRel = path
+    .relative(ROOT, path.join(__dirname, '..', 'renderer', 'pet.html'))
+    .split(path.sep).join('/');
+  petWin.loadURL(`app://local/${rendererRel}`);
 
   petWin.webContents.on('did-finish-load', () => {
     petWin.webContents.send('pet:bounds', travelBounds());

@@ -20,4 +20,7 @@
 
 <div id="stage"><canvas id="canvas"></canvas></div>
 
-<script type="module" src="app://local/desktop/src/renderer/pet.js"></script>
+<!-- Relative, not an absolute app://local/desktop/... path: pet.js sits next to this file
+     regardless of what a packager names the folder that contains both of them. main.js has
+     the same reasoning for how it loads THIS document. -->
+<script type="module" src="./pet.js"></script>

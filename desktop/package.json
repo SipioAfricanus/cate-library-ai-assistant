@@ -7,9 +7,42 @@
   "scripts": {
     "start": "electron .",
     "start:focusable": "PET_FOCUSABLE=1 electron .",
-    "start:local": "PET_SITE_URL=http://localhost:5001/ electron ."
+    "start:local": "PET_SITE_URL=http://localhost:5001/ electron .",
+    "dist:mac": "electron-builder --mac --universal"
   },
   "devDependencies": {
-    "electron": "^40.0.0"
+    "electron": "^40.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "org.cate.library-ram-pet",
+    "productName": "Cate Library Ram",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asar": false,
+    "extraResources": [
+      {
+        "from": "../static/mascot",
+        "to": "static/mascot",
+        "filter": ["**/*", "!dev/**"]
+      }
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": "universal"
+        }
+      ],
+      "category": "public.app-category.education",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null
+    }
   }
 }
