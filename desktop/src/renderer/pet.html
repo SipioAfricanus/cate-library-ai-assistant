@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Cate Ram</title>
+<!-- The overlay loads only its own local modules and never fetches anything remote, so the
+     policy can be this tight. Without it Electron warns at every launch. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' app://local; style-src 'unsafe-inline'; img-src 'self' data: app://local;">
+<style>
+  /* Every layer must be transparent, or the overlay shows as an opaque box over the desktop. */
+  html, body {
+    margin: 0; height: 100%; background: transparent; overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+    cursor: default;
+  }
+  #stage { position: absolute; inset: 0; }
+  #canvas { width: 100%; height: 100%; display: block; }
+  /* Only meaningful while the window is armed; elsewhere clicks pass straight through. */
+  #canvas:hover { cursor: pointer; }
+</style>
+
+<div id="stage"><canvas id="canvas"></canvas></div>
+
+<script type="module" src="app://local/desktop/src/renderer/pet.js"></script>
