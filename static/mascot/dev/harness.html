@@ -244,6 +244,9 @@ const trackBounds = () => ({
 });
 const wander = createWander({
   bounds: trackBounds(),
+  // sleepAfter is deliberately 16s here against the real 3600s default. Sleep is otherwise
+  // untestable in a dev harness -- nobody is going to sit watching this for an hour to check
+  // that the zzz still work.
   speed: 52, strideUnits: 40, startX: 40, startY: 60, sleepAfter: 16,
 });
 new ResizeObserver(() => wander.setBounds(trackBounds())).observe(track);

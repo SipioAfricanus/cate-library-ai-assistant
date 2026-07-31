@@ -19,13 +19,14 @@ const DEFAULTS = {
   idleMin: 2.4,               // seconds
   idleMax: 7.0,
   minTripUnits: 90,           // don't bother with trips shorter than this
-  // Seconds since the last user interaction before dozing off.
+  // Seconds since the last user interaction before dozing off. One hour: the ram should read
+  // as a companion that's been left alone, not one that nods off during a study session.
   //
   // KEEP THIS COMFORTABLY ABOVE idleMax. The pet only checks for sleep while idle, and it
   // waits out an idle timer of up to idleMax before setting off anywhere -- so a sleepAfter
   // below idleMax means it can doze before that timer ever fires and will never take a single
   // step. Verified: at sleepAfter 5 with idleMax 7 it never walks at all.
-  sleepAfter: 42,
+  sleepAfter: 3600,
   startX: null,
   startY: null,
 };
@@ -52,9 +53,9 @@ export function createWander(options = {}) {
   //
   // This started as an idle-time accumulator that reset whenever a trip completed, and that
   // made sleep unreachable: idle spells are capped at idleMax (7s) and a trip always follows,
-  // so the counter could never approach sleepAfter (42s). Ten simulated minutes produced no
-  // sleep at all. Wandering is what the pet DOES while awake, so it must not count as
-  // activity -- only wake()/halt(), which the host calls on real interaction, reset this.
+  // so the counter could never approach sleepAfter. Ten simulated minutes produced no sleep
+  // at all. Wandering is what the pet DOES while awake, so it must not count as activity --
+  // only wake()/halt(), which the host calls on real interaction, reset this.
   let sinceInteraction = 0;
 
   function randIdle() {
