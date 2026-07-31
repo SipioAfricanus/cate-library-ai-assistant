@@ -176,6 +176,33 @@
   }
   #send-btn:hover { background: var(--navy-dark); }
   #send-btn:disabled { background: #a9b7c9; cursor: default; }
+  /* Quick mode switch, sat right where you type so changing it for one question doesn't mean
+     a trip to the side panel. Outlined rather than filled so it never competes with Send. */
+  #mode-quick {
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    font-family: system-ui, sans-serif;
+    border: 1px solid #c7d3ea;
+    border-radius: 24px;
+    background: #fff;
+    color: var(--navy-dark);
+    cursor: pointer;
+    font-weight: 600;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  #mode-quick:hover { border-color: var(--navy); background: #f4f8ff; }
+  #mode-quick[data-mode="deep"] { border-color: var(--navy); background: #eaf1fb; }
+  #mode-quick .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #7fae6a;                 /* fast */
+  }
+  #mode-quick[data-mode="deep"] .dot { background: var(--navy); }
+  @media (max-width: 560px) {
+    #mode-quick .label { display: none; }   /* dot alone on narrow screens */
+  }
   .disclaimer {
     text-align: center;
     font-family: system-ui, sans-serif;
@@ -313,6 +340,12 @@
     <div id="input-bar">
       <form id="input-form">
         <input type="text" id="message-input" placeholder="Ask the library assistant..." autocomplete="off" autofocus required>
+        <!-- type="button" is load-bearing: inside a form, a button with no type defaults to
+             submit, so clicking this to change mode would also fire the question. -->
+        <button type="button" id="mode-quick" data-mode="fast" aria-live="polite"
+                title="Switch between fast and deep search">
+          <span class="dot" aria-hidden="true"></span><span class="label">Fast</span>
+        </button>
         <button type="submit" id="send-btn">Send</button>
       </form>
       <div class="disclaimer">Responses are AI-generated and may be inaccurate &mdash; verify important details with library staff.</div>
@@ -353,6 +386,7 @@
     const suggestionsEl = document.getElementById('suggestions');
     const modePrefEl = document.getElementById('mode-pref');
     const modePrefHint = document.getElementById('mode-pref-hint');
+    const modeQuick = document.getElementById('mode-quick');
 
     let conversationId = '';
 
@@ -382,6 +416,10 @@
       renderModePref();
     }
 
+    // One state, two controls. The panel is where you set it deliberately; the composer button
+    // is for switching just before asking one question. Both render from getModePref(), so
+    // they can never disagree -- the alternative, a genuine one-shot override that silently
+    // reverts after sending, means the control lies about what the next question will do.
     function renderModePref() {
       const current = getModePref();
       modePrefEl.querySelectorAll('.mode-opt').forEach((btn) => {
@@ -390,7 +428,20 @@
         btn.tabIndex = on ? 0 : -1;
       });
       modePrefHint.textContent = MODE_HINTS[current];
+
+      if (modeQuick) {
+        modeQuick.dataset.mode = current;
+        modeQuick.querySelector('.label').textContent = current === 'deep' ? 'Deep' : 'Fast';
+        modeQuick.setAttribute(
+          'aria-label',
+          `Search mode: ${current === 'deep' ? 'deep' : 'fast'}. Click to switch.`,
+        );
+      }
     }
+
+    modeQuick?.addEventListener('click', () => {
+      setModePref(getModePref() === 'deep' ? 'fast' : 'deep');
+    });
 
     modePrefEl.addEventListener('click', (e) => {
       const btn = e.target.closest('.mode-opt');
