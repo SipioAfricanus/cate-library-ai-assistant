@@ -48,8 +48,12 @@ const Z = {
   ear: 31,
   horn: 34,
   muzzle: 36,
+  // Expression overlays sit directly above the muzzle they modify, below the eyes -- a tear
+  // sliding down the cheek needs to pass UNDER the eye it fell from, not over it.
+  expression: 37,
   eye: 38,
   lid: 39,
+  tears: 41,
 };
 
 // ---------------------------------------------------------------------------
@@ -354,6 +358,112 @@ function buildHead() {
     },
   }));
 
+  // --- expression overlays --------------------------------------------------
+  // The neutral mouth above is permanent, static geometry -- it's what idle, walk and talk
+  // all use, and none of that risked touching it. Sad and happy instead draw a COVERING
+  // shape over it: alpha 0 hides the overlay entirely (neutral shows through untouched),
+  // alpha driven up by the relevant pose reveals the alternate expression. Same additive-node
+  // trick as `zzz` below, applied to the face instead of a state indicator above the head.
+
+  head.add(new Node('mouth_sad', {
+    z: Z.expression, alpha: 0,
+    draw: (ctx) => {
+      // Cover the neutral smile first -- without this the frown draws THROUGH the smile's
+      // own ink lines rather than replacing them, and the mouth reads as a scribble.
+      ctx.beginPath();
+      ctx.ellipse(0, -12, 12, 7, 0, 0, Math.PI * 2);
+      ctx.fillStyle = PALETTE.skin;
+      ctx.fill();
+      // A single downturned arc -- corners low, peak pulled UP in the middle (canvas y-down,
+      // so "peak" here is the more-negative-y point). The plain frown reads more clearly at
+      // this size than trying to invert the neutral mouth's fancier double-hump curve.
+      ctx.beginPath();
+      ctx.moveTo(-8, -9);
+      ctx.quadraticCurveTo(0, -17, 8, -9);
+      ctx.strokeStyle = PALETTE.ink;
+      ctx.lineWidth = LINE.hair;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    },
+  }));
+
+  head.add(new Node('mouth_happy', {
+    z: Z.expression, alpha: 0,
+    draw: (ctx) => {
+      ctx.beginPath();
+      ctx.ellipse(0, -12, 12, 7, 0, 0, Math.PI * 2);
+      ctx.fillStyle = PALETTE.skin;
+      ctx.fill();
+      // A wider, deeper version of the neutral double-hump smile -- an unmistakably bigger
+      // grin rather than a different shape, which is what keeps it reading as "the same ram,
+      // just delighted" instead of a swapped-out face.
+      ctx.beginPath();
+      ctx.moveTo(-11, -13);
+      ctx.quadraticCurveTo(-5.5, -5, 0, -12);
+      ctx.quadraticCurveTo(5.5, -5, 11, -13);
+      ctx.strokeStyle = PALETTE.ink;
+      ctx.lineWidth = LINE.hair;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    },
+  }));
+
+  // Blush -- cheerful cue for celebrate, reusing the inner-ear pink rather than adding a new
+  // colour just for this.
+  for (const side of ['l', 'r']) {
+    const dir = side === 'l' ? -1 : 1;
+    head.add(new Node(`blush_${side}`, {
+      x: dir * 30, y: -22, z: Z.expression, alpha: 0,
+      draw: (ctx) => {
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 8, 5.5, 0, 0, Math.PI * 2);
+        ctx.fillStyle = PALETTE.earInner;
+        ctx.fill();
+      },
+    }));
+  }
+
+  // Tears -- one repeating drop per eye, cycling continuously for as long as sad stays
+  // active rather than a single one-shot drop, which is what makes it read as CRYING and
+  // not "something landed on its face once."
+  for (const side of ['l', 'r']) {
+    const dir = side === 'l' ? -1 : 1;
+    head.add(new Node(`tear_${side}`, {
+      x: dir * 21, y: -30, z: Z.tears, alpha: 0,
+      draw: (ctx, node) => {
+        const t = node.dripT ?? 0;
+        const period = 1.15;
+        // Offset the right eye's cycle so the two don't drip in lockstep -- perfectly
+        // synchronised tears read as mechanical rather than as two independent eyes crying.
+        const u = ((t + (side === 'r' ? period * 0.5 : 0)) / period) % 1;
+        const fall = u * 34;
+        const fade = u < 0.12 ? u / 0.12 : (u > 0.7 ? 1 - (u - 0.7) / 0.3 : 1);
+
+        ctx.save();
+        ctx.globalAlpha *= Math.max(0, fade);
+        ctx.translate(0, fall);
+        // Classic teardrop: round base tapering to a point at the top, where it's still
+        // clinging to the eye.
+        ctx.beginPath();
+        ctx.moveTo(0, -8);
+        ctx.quadraticCurveTo(5, 2, 0, 7);
+        ctx.quadraticCurveTo(-5, 2, 0, -8);
+        ctx.closePath();
+        ctx.fillStyle = PALETTE.tear;
+        ctx.fill();
+        ctx.strokeStyle = PALETTE.ink;
+        ctx.lineWidth = LINE.hair * 0.8;
+        ctx.stroke();
+        // Highlight, same trick as the eye's own catchlight.
+        ctx.beginPath();
+        ctx.arc(-1.5, 0, 1.3, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.fill();
+        ctx.restore();
+      },
+    }));
+  }
+
   // --- eyes ---------------------------------------------------------------
   head.add(...buildEye('l'), ...buildEye('r'));
 
@@ -444,6 +554,50 @@ function drawZzz(ctx, node) {
 }
 
 // ---------------------------------------------------------------------------
+// Celebrate sparkle
+// ---------------------------------------------------------------------------
+
+// A small four-pointed sparkle, drawn as two crossed elongated diamonds -- the standard
+// cartoon "twinkle" shape. Reused per particle rather than each burst getting bespoke
+// geometry, same economy of means as the zzz glyph.
+function drawSparkle(ctx, size) {
+  ctx.beginPath();
+  ctx.moveTo(0, -size); ctx.lineTo(size * 0.28, -size * 0.28);
+  ctx.lineTo(size, 0); ctx.lineTo(size * 0.28, size * 0.28);
+  ctx.lineTo(0, size); ctx.lineTo(-size * 0.28, size * 0.28);
+  ctx.lineTo(-size, 0); ctx.lineTo(-size * 0.28, -size * 0.28);
+  ctx.closePath();
+  ctx.fillStyle = PALETTE.tear;      // reused: a bright cool accent, the same reason it works
+  ctx.fill();                        // for a water drop works here as a bright twinkle
+  ctx.strokeStyle = PALETTE.ink;
+  ctx.lineWidth = LINE.hair * 0.7;
+  ctx.stroke();
+}
+
+const SPARKLE_COUNT = 4;
+
+function drawSparkleBurst(ctx, node) {
+  const u = node.burstU ?? 0;
+  for (let i = 0; i < SPARKLE_COUNT; i++) {
+    const angle = (i / SPARKLE_COUNT) * Math.PI * 2 + 0.5;
+    // Fires outward fast, decelerating -- sqrt rather than linear distance -- and shrinks as
+    // it fades, so each sparkle reads as popping outward rather than just sliding.
+    //
+    // Radius capped at 38, not the original 46: at 46 the upward-drifting top sparkle landed
+    // right beside the eye's own catchlight, close enough to read as a second, misplaced
+    // highlight rather than a separate particle. Capped shorter, the burst stays framed
+    // around the shoulders and collar instead of intruding on the face.
+    const dist = Math.sqrt(u) * 38;
+    const fade = Math.max(0, 1 - u);
+    ctx.save();
+    ctx.globalAlpha *= fade;
+    ctx.translate(Math.cos(angle) * dist, Math.sin(angle) * dist - u * 10);
+    drawSparkle(ctx, 5 + fade * 4);
+    ctx.restore();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Assembly
 // ---------------------------------------------------------------------------
 
@@ -486,6 +640,12 @@ export function buildRam() {
   // Drawn above everything (z beyond the eyelids) so they are never occluded by a horn.
   body.add(new Node('zzz', {
     x: 174, y: 52, z: Z.lid + 10, alpha: 0, counterFlip: true, draw: drawZzz,
+  }));
+
+  // Celebrate sparkle burst. Centred on the body rather than any one limb, since it should
+  // read as excitement radiating from the whole ram during the jump, not from one spot.
+  body.add(new Node('sparkle', {
+    x: CX, y: 145, z: Z.lid + 10, alpha: 0, draw: drawSparkleBurst,
   }));
 
   pelvis.add(buildLeg('l'), buildLeg('r'));

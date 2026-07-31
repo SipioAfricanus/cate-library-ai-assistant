@@ -36,6 +36,14 @@ export function resetPose(n) {
   // Hidden unless applySleep turns it back on. Reset here rather than trusting the sleep pose
   // to clear it, so waking up can never leave Zs floating over an alert ram.
   if (n.zzz) n.zzz.alpha = 0;
+
+  // Same rule for the expression overlays: hidden by default, only applySad/applyCelebrate
+  // turn them on. Resetting here rather than letting each pose clean up after itself means a
+  // gesture that gets interrupted mid-flight (e.g. sad cut short by a new question arriving)
+  // can never leave a frown or a tear stuck on an otherwise-idle ram.
+  for (const name of ['mouth_sad', 'mouth_happy', 'blush_l', 'blush_r', 'tear_l', 'tear_r', 'sparkle']) {
+    if (n[name]) n[name].alpha = 0;
+  }
 }
 
 export function applyIdle(n, t, w = 1) {
@@ -223,10 +231,36 @@ export function applyCelebrate(n, u, w = 1) {
   n.ear_r.rot += 0.55 * hop * w;
   n.skirt.rot += Math.sin(u * Math.PI * 4) * 0.06 * decay * w;
   if (n.shadow) n.shadow.scaleHint = 1 - 0.35 * hop * w;
+
+  // Face: big grin and blush, faded in over the first hop and held rather than pulsing with
+  // it -- the hop already carries the up/down energy, and a mouth that also pulsed on every
+  // bounce would look like chattering teeth rather than one sustained expression of delight.
+  const faceIn = Math.min(1, u / 0.18);
+  if (n.mouth_happy) n.mouth_happy.alpha = faceIn * w;
+  if (n.blush_l) n.blush_l.alpha = faceIn * 0.85 * w;
+  if (n.blush_r) n.blush_r.alpha = faceIn * 0.85 * w;
+
+  // One sparkle burst, timed to the first (bigger) hop's peak rather than running the whole
+  // gesture -- a burst on every bounce would be visual noise, one burst at the high point
+  // reads as the "found it!" beat.
+  if (n.sparkle) {
+    const burst = Math.max(0, Math.min(1, (u - 0.06) / 0.34));
+    n.sparkle.alpha = u < 0.4 ? w : 0;
+    n.sparkle.burstU = burst;
+  }
 }
 
 /** One-shot. `u` is normalised progress 0..1 through the gesture. */
-export function applySad(n, u, w = 1) {
+/**
+ * @param u      normalised progress through the gesture, 0..1
+ * @param w      blend weight
+ * @param rawT   elapsed seconds since the gesture started, NOT normalised. Needed separately
+ *               from `u` because the tears must keep dripping in a repeating cycle for as
+ *               long as the ram is sad, and a 0..1 progress value can't drive a repeating
+ *               animation on its own -- it would need to be divided back out by the gesture's
+ *               duration, which is a number only the caller (index.js) actually knows.
+ */
+export function applySad(n, u, w = 1, rawT = 0) {
   if (w <= 0) return;
   // Ease in, hold, ease out -- a slump that arrives and recovers, rather than a twitch.
   const env = Math.sin(Math.min(1, u) * Math.PI) ** 0.6;
@@ -241,4 +275,14 @@ export function applySad(n, u, w = 1) {
   // convention noted in applyCelebrate.
   n.arm_l_shoulder.rot += -0.14 * env * w;
   n.arm_r_shoulder.rot += 0.14 * env * w;
+
+  // Face: frown fades in with the same envelope as the slump, so the expression change and
+  // the body language arrive together rather than one lagging the other.
+  if (n.mouth_sad) n.mouth_sad.alpha = env * w;
+
+  // Tears drip on a repeating cycle for the whole gesture -- see the rawT param doc above.
+  // Fading them in/out with `env` (not a flat on/off) means they arrive and recede with the
+  // rest of the expression instead of snapping.
+  if (n.tear_l) { n.tear_l.alpha = env * w; n.tear_l.dripT = rawT; }
+  if (n.tear_r) { n.tear_r.alpha = env * w; n.tear_r.dripT = rawT; }
 }

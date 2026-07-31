@@ -40,6 +40,7 @@ export const PALETTE = {
 
   eyeWhite: '#ffffff',
   pupil: '#20303f',
+  tear: '#8fc5e3',        // crying -- a cool water-blue, deliberately distinct from the eye
 
   // Dark navy rather than black: it separates shapes at pet size without the harsh sticker
   // look pure black gives, and it sits in the same family as the hoodie.

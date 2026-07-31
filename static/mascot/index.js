@@ -93,7 +93,7 @@ export function createMascot(options = {}) {
     applySleep(nodes, t, sleepW);
     applyTalk(nodes, overlay.talk.t, overlay.talk.w);
     applyCelebrate(nodes, overlay.celebrate.dur ? overlay.celebrate.t / overlay.celebrate.dur : 0, overlay.celebrate.w);
-    applySad(nodes, overlay.sad.dur ? overlay.sad.t / overlay.sad.dur : 0, overlay.sad.w);
+    applySad(nodes, overlay.sad.dur ? overlay.sad.t / overlay.sad.dur : 0, overlay.sad.w, overlay.sad.t);
     applyBlink();
     paint();
   }
