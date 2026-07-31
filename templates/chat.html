@@ -328,8 +328,7 @@
     <div class="card">
       <h2>Search mode</h2>
       <div id="mode-pref" role="radiogroup" aria-label="Default search mode">
-        <button type="button" class="mode-opt" data-mode="ask" role="radio" aria-checked="true">Ask each time</button>
-        <button type="button" class="mode-opt" data-mode="fast" role="radio" aria-checked="false">Fast</button>
+        <button type="button" class="mode-opt" data-mode="fast" role="radio" aria-checked="true">Fast</button>
         <button type="button" class="mode-opt" data-mode="deep" role="radio" aria-checked="false">Deep</button>
       </div>
       <p id="mode-pref-hint"></p>
@@ -357,27 +356,29 @@
 
     let conversationId = '';
 
-    // ---- Default search mode -------------------------------------------------
-    // The chatflow opens every question by asking fast vs deep, which costs a click before
-    // any answer. Storing a default lets the page answer that prompt automatically so the
-    // common case is one message -> one answer. 'ask' keeps the prompt (the default).
+    // ---- Search mode ---------------------------------------------------------
+    // The chatflow opens every question by asking fast vs deep. The page always answers that
+    // prompt automatically from this setting, so a question is one message and one answer.
+    //
+    // There is deliberately no "ask me each time" option: the prompt cost a click before
+    // every single answer. The setting is always one of the two real modes, and switching is
+    // a single click in the panel.
     const MODE_PREF_KEY = 'search_mode_default';
+    const DEFAULT_MODE = 'fast';
     const MODE_HINTS = {
-      ask: 'The assistant asks which mode to use before each search.',
-      fast: 'Skips the prompt and always uses the fast model.',
-      deep: 'Skips the prompt and always uses the deep model, which can take longer.',
+      fast: 'Every search uses the fast model.',
+      deep: 'Every search uses the deep model, which can take longer.',
     };
 
     function getModePref() {
       const v = localStorage.getItem(MODE_PREF_KEY);
-      return v === 'fast' || v === 'deep' ? v : 'ask';
+      // Anything unrecognised -- unset, or a value left by an older build such as the removed
+      // 'ask' -- falls back to the default rather than being trusted.
+      return v === 'fast' || v === 'deep' ? v : DEFAULT_MODE;
     }
 
     function setModePref(mode) {
-      // Store nothing for 'ask' so the absence of the key means "unset", and a future
-      // rename of the mode ids can't leave a stale value pinned.
-      if (mode === 'ask') localStorage.removeItem(MODE_PREF_KEY);
-      else localStorage.setItem(MODE_PREF_KEY, mode);
+      localStorage.setItem(MODE_PREF_KEY, mode === 'deep' ? 'deep' : 'fast');
       renderModePref();
     }
 
@@ -525,9 +526,9 @@
       if (data.requires_action) {
         if (data.answer) addMessage(data.answer, 'bot');
 
-        // Answer the search-mode prompt automatically when a default is set, skipping both
-        // the question bubble and the buttons. The chosen mode still shows up in the wait
-        // copy ("Deep search running..."), so the turn doesn't become silently mysterious.
+        // Always answer the search-mode prompt from the panel setting, skipping both the
+        // question bubble and the buttons. The chosen mode still shows up in the wait copy
+        // ("Deep search running..."), so the turn doesn't become silently mysterious.
         //
         // Deliberately gated on form_kind === 'mode'. The other pause is the purchase
         // request, and auto-answering that would file purchase requests on someone's behalf
@@ -538,7 +539,7 @@
         // submitting an action Dify will reject.
         const modePref = getModePref();
         const offered = (data.actions || []).some((a) => a.id === modePref);
-        if (data.form_kind === 'mode' && modePref !== 'ask' && offered) {
+        if (data.form_kind === 'mode' && offered) {
           submitHumanInput(data.form_token, modePref, data.message_id, data.answer || '', 'mode');
           return;
         }
