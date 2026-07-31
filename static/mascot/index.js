@@ -59,7 +59,14 @@ export function createMascot(options = {}) {
     sad: { w: 0, on: false, t: 0, dur: 1.9 },
   };
 
-  const ease = (cur, target, dt, tau) => cur + (target - cur) * Math.min(1, dt / tau);
+  // Snaps to the target once close enough. An exponential ease is asymptotic and never
+  // actually arrives, which leaves every faded-out pose running forever at a weight like
+  // 1e-4 -- invisible, but it means "is this state off?" is never exactly true and the pose
+  // functions keep doing work for a state nobody can see.
+  const ease = (cur, target, dt, tau) => {
+    const next = cur + (target - cur) * Math.min(1, dt / tau);
+    return Math.abs(target - next) < 0.001 ? target : next;
+  };
 
   function frame(dt) {
     t += dt;
@@ -150,7 +157,12 @@ export function createMascot(options = {}) {
     setFacing(dir) {
       const s = dir < 0 ? -1 : 1;
       nodes.facing.sx = s;
-      nodes.wordmark.sx = s;
+      // Counter-flip every glyph node so letters stay readable. Driven by the node flag
+      // rather than naming nodes here, so adding a new glyph doesn't require remembering to
+      // update this function.
+      for (const n of Object.values(nodes)) {
+        if (n && n.counterFlip) n.sx = s;
+      }
     },
     getFacing() { return nodes.facing.sx < 0 ? -1 : 1; },
 

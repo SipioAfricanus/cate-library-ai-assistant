@@ -55,6 +55,11 @@ export class Node {
     this.draw = opts.draw ?? null;   // (ctx, node, pass) => void, in local space
     // Nodes sharing an `outlineGroup` are rendered as ONE silhouette -- see render().
     this.outlineGroup = opts.outlineGroup ?? null;
+    // Anything that reads as text or a glyph. Mirroring the rig to face left mirrors every
+    // descendant, which turns letters backwards; setFacing negates these to cancel the
+    // parent's flip. A flag rather than a hardcoded list in setFacing, so a new glyph node
+    // can't silently ship reversed -- which is exactly how the chest print first shipped.
+    this.counterFlip = opts.counterFlip === true;
     this.visible = opts.visible !== false;
     this.alpha = opts.alpha ?? 1;
 

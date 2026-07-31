@@ -33,6 +33,9 @@ export function resetPose(n) {
   if (n.chest) n.chest.sy = 1;
   if (n.muzzle) n.muzzle.sy = 1;
   if (n.shadow) n.shadow.scaleHint = 1;
+  // Hidden unless applySleep turns it back on. Reset here rather than trusting the sleep pose
+  // to clear it, so waking up can never leave Zs floating over an alert ram.
+  if (n.zzz) n.zzz.alpha = 0;
 }
 
 export function applyIdle(n, t, w = 1) {
@@ -162,6 +165,14 @@ export function applySleep(n, t, w = 1) {
   n.chest.sy += Math.sin(t * 0.55) * 0.035 * w;
   n.body.y += Math.sin(t * 0.55) * 2.2 * w;
   if (n.shadow) n.shadow.scaleHint = 1 + 0.06 * w;
+
+  // Floating Zs. The node's own draw owns the particle motion; the pose only supplies the
+  // clock and fades the whole group in with the sleep blend, so they drift in as the ram
+  // settles rather than snapping on the instant it dozes.
+  if (n.zzz) {
+    n.zzz.alpha = w;
+    n.zzz.zTime = t;
+  }
 }
 
 // ---------------------------------------------------------------------------

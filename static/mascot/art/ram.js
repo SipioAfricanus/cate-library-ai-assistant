@@ -394,6 +394,56 @@ function buildHead() {
 }
 
 // ---------------------------------------------------------------------------
+// Sleep "zzz"
+// ---------------------------------------------------------------------------
+
+// A Z drawn as a stroked path rather than canvas text: fillText depends on whichever system
+// font is available and would not match the flat-vector style. Stroked twice -- a wide pale
+// pass then a narrow ink pass -- so the glyph stays legible against ANY desktop wallpaper the
+// overlay happens to be floating over.
+function drawZ(ctx, size) {
+  const w = size * 0.5;
+  const h = size * 0.55;
+  ctx.beginPath();
+  ctx.moveTo(-w, -h);
+  ctx.lineTo(w, -h);
+  ctx.lineTo(-w, h);
+  ctx.lineTo(w, h);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = PALETTE.wool;
+  ctx.lineWidth = size * 0.42;
+  ctx.stroke();
+  ctx.strokeStyle = PALETTE.ink;
+  ctx.lineWidth = size * 0.20;
+  ctx.stroke();
+}
+
+const ZZZ_COUNT = 3;
+const ZZZ_PERIOD = 2.8;          // seconds for one Z to complete its rise
+
+function drawZzz(ctx, node) {
+  const t = node.zTime ?? 0;
+  for (let i = 0; i < ZZZ_COUNT; i++) {
+    // Evenly staggered, so there is always one mid-flight rather than all three pulsing
+    // together.
+    const u = ((t / ZZZ_PERIOD) + i / ZZZ_COUNT) % 1;
+
+    // Fade in fast, hold, fade out slowly -- a Z that pops out of existence at full opacity
+    // reads as a glitch.
+    const alpha = u < 0.15 ? u / 0.15 : (u > 0.65 ? 1 - (u - 0.65) / 0.35 : 1);
+
+    ctx.save();
+    ctx.globalAlpha *= Math.max(0, alpha);
+    // Drifts up and outward, with a slow sway so the three don't travel in a straight line.
+    ctx.translate(u * 20 + Math.sin(u * Math.PI * 2 + i) * 5, -u * 52);
+    ctx.rotate(Math.sin(u * Math.PI * 2 + i * 1.7) * 0.18);
+    drawZ(ctx, 11 + u * 12);     // grows as it rises, reading as drifting toward the viewer
+    ctx.restore();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Assembly
 // ---------------------------------------------------------------------------
 
@@ -427,6 +477,16 @@ export function buildRam() {
   const pelvis = new Node('pelvis', { x: CX, y: 222 });
   const spine = new Node('spine', { x: CX, y: 196 });
   body.add(pelvis, spine);
+
+  // Sleep "zzz". Parented to `body`, NOT to the head, for two reasons: the sleeping head is
+  // tilted well over, and Zs inheriting that tilt would drift off sideways instead of rising;
+  // and hanging them off the body keeps them clear of the head's own animation channels.
+  // counterFlip keeps them from mirroring into backwards Zs when the ram faces left.
+  //
+  // Drawn above everything (z beyond the eyelids) so they are never occluded by a horn.
+  body.add(new Node('zzz', {
+    x: 174, y: 52, z: Z.lid + 10, alpha: 0, counterFlip: true, draw: drawZzz,
+  }));
 
   pelvis.add(buildLeg('l'), buildLeg('r'));
 
@@ -489,7 +549,7 @@ export function buildRam() {
   // which is the standard fix for text on a mirrored 2D rig. Anything added here that reads
   // as text or a logo needs the same treatment.
   chest.add(new Node('wordmark', {
-    x: 0, y: -6, z: Z.torso + 1,
+    x: 0, y: -6, z: Z.torso + 1, counterFlip: true,
     draw: (ctx) => {
       // `shade: null` on purpose. The stitch-backing shadow is a nice touch in isolation, but
       // at this size it darkened every stitch's edge and dropped the contrast against the
