@@ -12,13 +12,64 @@
     -webkit-user-select: none; user-select: none;
     cursor: default;
   }
-  #stage { position: absolute; inset: 0; }
+
+  /* Two stacked regions, not one: the speech bubble needs room ABOVE the ram, and giving it a
+     fixed-height flex row (rather than absolutely positioning it over the canvas by guessing
+     where the ram's head is) means the mascot's own container just shrinks to fit whatever's
+     left -- no pixel math to keep in sync if either region's size ever changes. */
+  #root { display: flex; flex-direction: column; height: 100%; }
+  #bubbleWrap {
+    flex: 0 0 96px;
+    position: relative;
+    /* Never a click/hover target: it's a transient readout, not a control, and letting it
+       capture the pointer would create a dead patch right above the ram's real hit area. */
+    pointer-events: none;
+  }
+  #stage { flex: 1 1 auto; min-height: 0; position: relative; }
   #canvas { width: 100%; height: 100%; display: block; }
   /* Only meaningful while the window is armed; elsewhere clicks pass straight through. */
   #canvas:hover { cursor: pointer; }
+
+  /* Colours matched to static/mascot/art/palette.js's wool/ink by hand rather than imported,
+     since this is plain CSS and the two can't share a source of truth automatically -- if the
+     palette ever moves, these need updating alongside it. */
+  #bubble {
+    position: absolute;
+    left: 50%; bottom: 14px;
+    transform: translateX(-50%) translateY(6px) scale(0.94);
+    max-width: 176px;
+    padding: 9px 12px;
+    background: #f8f2e2;
+    border: 2px solid #1e2f42;
+    border-radius: 14px;
+    color: #1e2f42;
+    font: 600 11.5px/1.35 -apple-system, system-ui, sans-serif;
+    text-align: center;
+    box-shadow: 0 3px 10px rgba(30,47,66,0.18);
+    opacity: 0;
+    transition: opacity 180ms ease, transform 180ms ease;
+  }
+  #bubble.show { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  /* Tail: two stacked triangles, the outer one 1-2px larger, so the visible sliver between
+     them reads as the bubble's own outline continuing down to a point -- the standard way to
+     get an outlined speech-bubble tail out of plain CSS borders. */
+  #bubble::after {
+    content: ''; position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%);
+    border-left: 7px solid transparent; border-right: 7px solid transparent;
+    border-top: 8px solid #1e2f42;
+  }
+  #bubble::before {
+    content: ''; position: absolute; left: 50%; bottom: -5.5px; transform: translateX(-50%);
+    border-left: 5.5px solid transparent; border-right: 5.5px solid transparent;
+    border-top: 6.5px solid #f8f2e2;
+    z-index: 1;
+  }
 </style>
 
-<div id="stage"><canvas id="canvas"></canvas></div>
+<div id="root">
+  <div id="bubbleWrap"><div id="bubble"></div></div>
+  <div id="stage"><canvas id="canvas"></canvas></div>
+</div>
 
 <!-- Relative, not an absolute app://local/desktop/... path: pet.js sits next to this file
      regardless of what a packager names the folder that contains both of them. main.js has

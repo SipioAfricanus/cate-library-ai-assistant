@@ -27,7 +27,13 @@ const PET_FOCUSABLE = process.env.PET_FOCUSABLE === '1';
 const TRACE = process.env.PET_TRACE === '1';
 
 const PET_W = 200;
-const PET_H = 240;
+// 240 is exactly enough room for the ram alone (it was tuned tight around the character).
+// The extra 96 is headroom for the periodic speech bubble, which lives in its own flex region
+// above the ram in pet.html -- see the comment there. Kept as one named delta rather than a
+// bare 336 so the "why is this taller than the ram" question has an answer right at the
+// number that changed.
+const BUBBLE_HEADROOM = 96;
+const PET_H = 240 + BUBBLE_HEADROOM;
 
 let petWin = null;
 let siteWin = null;

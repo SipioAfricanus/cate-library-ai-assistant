@@ -130,6 +130,7 @@ canvas.addEventListener('mousedown', (e) => {
   suppressClick = false;       // a fresh press starts clean
   wander.wake();
   wander.halt();               // stop walking the instant it's grabbed
+  hideBubble();                // being picked up beats whatever it was about to say
 });
 
 window.addEventListener('mousemove', (e) => {
@@ -172,6 +173,61 @@ canvas.addEventListener('click', () => {
   wander.halt();
   mascot.celebrate();
 });
+
+// --- speech bubble ---------------------------------------------------------------
+// Rotates through a fixed set of introductions/hints. This exists because the pet has no
+// other way to explain itself -- there's no label, no tooltip, nothing that says what it is
+// or what double-clicking it does, and a student seeing it for the first time has no reason
+// to guess.
+const bubbleEl = document.getElementById('bubble');
+const BUBBLE_MESSAGES = [
+  'Double-click me to open the library chatbot window',
+  "I'm the Cate School library chatbot",
+  'You can drag me around',
+];
+let bubbleIdx = 0;
+let bubbleTimer = null;
+
+const BUBBLE_SHOW_MS = 6000;
+// A wide, randomised gap rather than a fixed one -- a bubble every N seconds on the dot
+// reads as a machine ticking; a loose 55-90s window reads as the pet occasionally having
+// something to say.
+const BUBBLE_GAP_MIN_MS = 55000;
+const BUBBLE_GAP_MAX_MS = 90000;
+
+function hideBubble() {
+  bubbleEl.classList.remove('show');
+}
+
+function scheduleBubble() {
+  clearTimeout(bubbleTimer);
+  // window.pet.trace read directly here, NOT via the `TRACE` const declared further down --
+  // scheduleBubble() is called immediately, below, which runs before this module's evaluation
+  // reaches that later `const TRACE = ...` line. Referencing it here would throw a
+  // ReferenceError (temporal dead zone), since a `const` is unusable from the moment its
+  // enclosing scope starts until its own declaration line actually executes.
+  const fast = !!window.pet.trace;
+  const min = fast ? 4000 : BUBBLE_GAP_MIN_MS;
+  const max = fast ? 7000 : BUBBLE_GAP_MAX_MS;
+  bubbleTimer = setTimeout(showBubble, min + Math.random() * (max - min));
+}
+
+function showBubble() {
+  // Asleep or mid-drag are the two states where a bubble popping up would look wrong -- a
+  // dozing ram announcing itself, or one being dragged mid-sentence. Skip this slot rather
+  // than force it; the next one is still on schedule, not doubled up once it's clear.
+  if (wander.getMode() === 'sleep' || dragging) { scheduleBubble(); return; }
+
+  bubbleEl.textContent = BUBBLE_MESSAGES[bubbleIdx];
+  bubbleIdx = (bubbleIdx + 1) % BUBBLE_MESSAGES.length;
+  bubbleEl.classList.add('show');
+
+  setTimeout(() => {
+    hideBubble();
+    scheduleBubble();
+  }, BUBBLE_SHOW_MS);
+}
+scheduleBubble();
 
 // --- drive ----------------------------------------------------------------------
 // Throttled position trace. The overlay has no devtools, so without a log line there is no
