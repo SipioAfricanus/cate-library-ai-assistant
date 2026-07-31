@@ -31,6 +31,7 @@ let petWin = null;
 let siteWin = null;
 let hitRect = null;          // ram's opaque bounds in window CSS px, from the renderer
 let interactive = null;      // tri-state: null means "never applied yet"
+let drag = null;             // { dx, dy }: cursor offset within the window when grabbed
 
 // ES modules refuse to load over file:// because of CORS, and the mascot is a dozen separate
 // module files under static/. A privileged custom scheme is the clean fix -- it keeps
@@ -51,12 +52,15 @@ function serveFromRoot(request) {
   return net.fetch(pathToFileURL(target).toString());
 }
 
+// The pet roams the whole work area now, not just along its bottom edge. workArea rather than
+// bounds so it stays clear of the menu bar and Dock.
 function travelBounds() {
   const area = screen.getPrimaryDisplay().workArea;
   return {
-    min: area.x,
-    max: Math.max(area.x, area.x + area.width - PET_W),
-    y: area.y + area.height - PET_H,
+    minX: area.x,
+    maxX: Math.max(area.x, area.x + area.width - PET_W),
+    minY: area.y,
+    maxY: Math.max(area.y, area.y + area.height - PET_H),
   };
 }
 
@@ -93,7 +97,11 @@ function createPet() {
   petWin.setIgnoreMouseEvents(true, { forward: true });
 
   const b = travelBounds();
-  petWin.setBounds({ x: Math.round((b.min + b.max) / 2), y: b.y, width: PET_W, height: PET_H });
+  petWin.setBounds({
+    x: Math.round((b.minX + b.maxX) / 2),
+    y: Math.round(b.maxY * 0.75),
+    width: PET_W, height: PET_H,
+  });
   petWin.loadURL('app://local/desktop/src/renderer/pet.html');
 
   petWin.webContents.on('did-finish-load', () => {
@@ -125,6 +133,22 @@ function pollCursor() {
   if (!petWin || petWin.isDestroyed() || !petWin.isVisible()) return;
   const pt = screen.getCursorScreenPoint();
   const b = petWin.getBounds();
+
+  // While dragging, the window simply follows the cursor and stays armed.
+  //
+  // Done here rather than from renderer mousemove events on purpose: main already polls the
+  // cursor, and this keeps working even when the pointer briefly outruns the window on a fast
+  // drag, which is exactly when mousemove-based dragging stutters or drops the grab.
+  if (drag) {
+    const t = travelBounds();
+    petWin.setBounds({
+      x: Math.round(Math.min(t.maxX, Math.max(t.minX, pt.x - drag.dx))),
+      y: Math.round(Math.min(t.maxY, Math.max(t.minY, pt.y - drag.dy))),
+      width: PET_W, height: PET_H,
+    });
+    return;
+  }
+
   const lx = pt.x - b.x;
   const ly = pt.y - b.y;
 
@@ -168,9 +192,14 @@ function openSite() {
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
 
+  console.log('[pet] site window created, loading', SITE_URL);
+  siteWin.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    console.error(`[pet] site failed to load ${url}: ${desc} (${code})`);
+  });
   siteWin.loadURL(SITE_URL);
 
   siteWin.on('closed', () => {
+    console.log('[pet] site window closed');
     siteWin = null;
     // The ram comes back exactly where it left off -- the renderer keeps its own position,
     // and showInactive avoids yanking focus away from whatever is now in front.
@@ -180,13 +209,37 @@ function openSite() {
 
 ipcMain.on('pet:open-site', openSite);
 ipcMain.on('pet:hit-rect', (_e, rect) => { hitRect = rect; });
-ipcMain.on('pet:move', (_e, x) => {
+
+ipcMain.on('pet:move', (_e, pos) => {
   if (!petWin || petWin.isDestroyed()) return;
+  // Wander must not fight the user's hand: while a drag is active the cursor owns the window.
+  if (drag) return;
   const b = travelBounds();
   petWin.setBounds({
-    x: Math.round(Math.min(b.max, Math.max(b.min, x))),
-    y: b.y, width: PET_W, height: PET_H,
+    x: Math.round(Math.min(b.maxX, Math.max(b.minX, pos.x))),
+    y: Math.round(Math.min(b.maxY, Math.max(b.minY, pos.y))),
+    width: PET_W, height: PET_H,
   });
+});
+
+ipcMain.on('pet:drag-start', () => {
+  if (!petWin || petWin.isDestroyed()) return;
+  const pt = screen.getCursorScreenPoint();
+  const b = petWin.getBounds();
+  // Remember where inside the window it was grabbed, so the ram doesn't jump to centre itself
+  // under the cursor the moment the drag begins.
+  drag = { dx: pt.x - b.x, dy: pt.y - b.y };
+});
+
+ipcMain.on('pet:drag-end', () => {
+  if (!drag) return;
+  drag = null;
+  interactive = null;    // re-derive click-through from a known state
+  if (!petWin || petWin.isDestroyed()) return;
+  // Tell the renderer where it was dropped, or wander would resume from its own stale
+  // position and the ram would teleport back on its next step.
+  const b = petWin.getBounds();
+  petWin.webContents.send('pet:placed', { x: b.x, y: b.y });
 });
 
 // Exercises the double-click flow without a human double-clicking, which is otherwise
@@ -194,7 +247,36 @@ ipcMain.on('pet:move', (_e, x) => {
 // Runs the exact same openSite() path the renderer's dblclick triggers.
 function selfTest() {
   const log = (k, v) => console.log(`[selftest] ${k}: ${v}`);
+
+  // --- drag, exercised through the same IPC path the renderer uses -------------
+  // A real drag needs a cursor this process cannot move, so instead: grab, then verify the
+  // poll loop tracks the (stationary) cursor and that wander is locked out while held.
   setTimeout(() => {
+    const before = petWin.getBounds();
+    const cursor = screen.getCursorScreenPoint();
+    ipcMain.emit('pet:drag-start');
+    log('drag armed', drag !== null);
+    log('grab offset recorded', drag && `dx=${drag.dx} dy=${drag.dy}`);
+
+    // While held, a wander update must be ignored entirely.
+    ipcMain.emit('pet:move', null, { x: before.x + 400, y: before.y + 300 });
+    const during = petWin.getBounds();
+    log('wander move ignored while dragging', during.x !== before.x + 400);
+    // The poll loop should have parked the window so the grab point sits under the cursor.
+    log('window tracks cursor', Math.abs((during.x + drag.dx) - cursor.x) <= 2);
+
+    ipcMain.emit('pet:drag-end');
+    log('drag released', drag === null);
+
+    setTimeout(() => {
+      const after = petWin.getBounds();
+      ipcMain.emit('pet:move', null, { x: after.x + 120, y: after.y - 90 });
+      log('wander move accepted after release', petWin.getBounds().x !== after.x);
+      runSiteTest();
+    }, 400);
+  }, 2200);
+
+  const runSiteTest = () => setTimeout(() => {
     log('pet visible before', petWin.isVisible());
     openSite();
     setTimeout(() => {

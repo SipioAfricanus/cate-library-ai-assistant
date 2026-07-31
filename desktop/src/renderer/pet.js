@@ -25,10 +25,18 @@ const mascot = createMascot({
 // the animation twice per frame.
 mascot.setPaused(true);
 
-const wander = createWander({ bounds: { min: 0, max: 800 }, speed: 46, strideUnits: 44 });
-window.pet.onBounds((b) => {
-  wander.setBounds(b.min, b.max);
-  wander.setX(Math.min(b.max, Math.max(b.min, wander.getX())));
+const wander = createWander({
+  bounds: { minX: 0, maxX: 800, minY: 0, maxY: 400 },
+  speed: 46,
+  strideUnits: 44,
+});
+window.pet.onBounds((b) => wander.setBounds(b));
+
+// After a drag, resync wander to where the window actually ended up. Without this it would
+// resume from its own stale position and the ram would teleport back on the next step.
+window.pet.onPlaced((p) => {
+  wander.setPos(p.x, p.y);
+  wander.halt();
 });
 
 // --- hit rect ------------------------------------------------------------------
@@ -94,16 +102,52 @@ function publishHitRect() {
 setInterval(publishHitRect, 400);
 
 // --- interaction ---------------------------------------------------------------
-// Double-click opens the assistant. Single click just wakes and greets, so a stray click
-// doesn't launch a window the student didn't ask for.
+// Drag to reposition, single click to greet, double click to open the assistant.
+//
+// The three have to be told apart from the same button. A press only becomes a DRAG once the
+// pointer travels past a small threshold -- without it, the pixel or two of movement in an
+// ordinary click would register as a drag and swallow the click entirely, which is a common
+// and maddening bug in draggable widgets.
+const DRAG_THRESHOLD = 4;      // CSS px
+let press = null;
+let didDrag = false;
+
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  press = { x: e.screenX, y: e.screenY };
+  didDrag = false;
+  wander.wake();
+  wander.halt();               // stop walking the instant it's grabbed
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!press || didDrag) return;
+  if (Math.hypot(e.screenX - press.x, e.screenY - press.y) < DRAG_THRESHOLD) return;
+  didDrag = true;
+  window.pet.dragStart();
+  document.body.style.cursor = 'grabbing';
+});
+
+// Listening on window, not the canvas: a fast drag can put the pointer outside the window
+// between frames, and a canvas-only mouseup would then never fire, leaving the ram stuck to
+// the cursor.
+window.addEventListener('mouseup', () => {
+  if (!press) return;
+  press = null;
+  document.body.style.cursor = '';
+  if (didDrag) window.pet.dragEnd();
+});
+
 canvas.addEventListener('dblclick', (e) => {
   e.preventDefault();
+  if (didDrag) return;
   wander.wake();
   wander.halt();
   window.pet.openSite();
 });
 
 canvas.addEventListener('click', () => {
+  if (didDrag) return;         // a drag is not a greeting
   wander.wake();
   wander.halt();
   mascot.celebrate();
@@ -122,5 +166,7 @@ let last = performance.now();
   mascot.setFacing(s.facing);
   mascot.setWalkSpeed(s.cyclesPerSecond);
   mascot.step(dt);
-  window.pet.move(s.x);
+  // Skipped while dragging: main owns the window position then, and sending wander's stale
+  // position would fight the cursor and make the ram judder.
+  if (!didDrag) window.pet.move({ x: s.x, y: s.y });
 })();

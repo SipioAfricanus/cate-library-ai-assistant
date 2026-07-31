@@ -88,7 +88,7 @@
   <div class="card" style="flex-basis:100%">
     <h2>wander &mdash; roams, turns around, dozes off</h2>
     <div id="track" class="checker"
-         style="position:relative;height:210px;border-radius:10px;overflow:hidden">
+         style="position:relative;height:340px;border-radius:10px;overflow:hidden">
       <!-- The canvas needs explicit CSS sizing. Without it the browser uses the canvas's
            intrinsic width/height ATTRIBUTES, which createSurface sets in device pixels
            (190 x dpr 2 = 380) -- so it rendered at double size and overflowed the box,
@@ -237,12 +237,16 @@ const pet = createMascot({
 pet.setPaused(true);   // stepped by the wander loop below, not by its own rAF
 
 const PET_W = 190;
-const wander = createWander({
-  bounds: { min: 0, max: Math.max(1, track.clientWidth - PET_W) },
-  speed: 52, strideUnits: 40, startX: 40, sleepAfter: 16,
+const PET_H = 190;
+const trackBounds = () => ({
+  minX: 0, maxX: Math.max(1, track.clientWidth - PET_W),
+  minY: 0, maxY: Math.max(1, track.clientHeight - PET_H),
 });
-new ResizeObserver(() => wander.setBounds(0, Math.max(1, track.clientWidth - PET_W)))
-  .observe(track);
+const wander = createWander({
+  bounds: trackBounds(),
+  speed: 52, strideUnits: 40, startX: 40, startY: 60, sleepAfter: 16,
+});
+new ResizeObserver(() => wander.setBounds(trackBounds())).observe(track);
 
 let wanderOn = false;
 $('wanderOn').onchange = (e) => { wanderOn = e.target.checked; };
@@ -256,12 +260,13 @@ $('cPet').onclick = () => { wander.wake(); wander.halt(); pet.celebrate(); };
 function stepWander(dt) {
   const s = wander.update(dt);
   petbox.style.left = `${s.x}px`;
+  petbox.style.top = `${s.y}px`;
   pet.setBase(s.base);
   pet.setFacing(s.facing);
   pet.setWalkSpeed(s.cyclesPerSecond);
   pet.step(dt);
   $('wanderStat').textContent =
-    `x=${s.x.toFixed(0)}  facing=${s.facing > 0 ? 'right' : 'left'}  ${s.base}`;
+    `x=${s.x.toFixed(0)} y=${s.y.toFixed(0)}  facing=${s.facing > 0 ? 'right' : 'left'}  ${s.base}`;
   return s;
 }
 window.__ram.stepWander = stepWander;
