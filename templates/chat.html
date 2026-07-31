@@ -554,20 +554,52 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
-    // What to show while a resumed workflow is still running. A deep search is genuinely
-    // slower, so telling the user that up front beats an unqualified "Thinking..." that
-    // makes it look stuck.
+    // What to show while a resumed workflow is still running.
+    //
+    // This CANNOT be driven by real events, and that's a measured fact, not a shortcut taken
+    // for convenience. The resume runs through Dify's /form/human_input endpoint rather than
+    // /chat-messages, so no SSE stream is open during it -- and the same is true of Dify's
+    // queryable GET /workflows/run/{id}: polled every 2s against a live deep-search run, its
+    // status field stayed at "paused" for the entire ~90s wait and never once reflected the
+    // work actually happening underneath. There is no live per-node signal reachable from this
+    // server during the one phase where all the real work occurs.
+    //
+    // So this cycles through the chatflow's REAL, KNOWN node order on a timer instead. That is
+    // the honest middle ground: the sequence isn't invented busywork, it's what the workflow
+    // actually does in the actual order it does it -- it's only the exact TIMING of each step
+    // that's simulated rather than event-driven, because that timing is the one thing nothing
+    // available to this server can observe.
+    //
+    // Deep gets its own, longer sequence rather than reusing fast's with extra steps appended:
+    // fast is believed to skip the web-search fallback entirely, so showing a "searching the
+    // web" step on a fast query would be a claim this server cannot back up.
+    const FAST_STEPS = [
+      'Understanding your question...',
+      'Searching the library catalog...',
+      'Reviewing the results...',
+      'Putting together an answer...',
+    ];
+    const DEEP_STEPS = [
+      'Understanding your question...',
+      'Searching the library catalog...',
+      'Checking a few more sources...',
+      'Reviewing everything it found...',
+      'Putting together a thorough answer...',
+    ];
+    const STEP_SECONDS = 4;      // how long each step holds before advancing to the next
+    const REASSURE_AFTER_S = 24; // past this, append elapsed time so a long wait doesn't look frozen
+
     function waitLabel(elapsedS, formKind, actionId) {
-      const deep = formKind === 'mode' && actionId === 'deep';
       if (formKind === 'confirm') {
         return elapsedS > 12 ? `Recording your request... (${elapsedS}s)` : 'Recording your request...';
       }
-      if (deep) {
-        return elapsedS > 8
-          ? `Deep search running — this can take a while... (${elapsedS}s)`
-          : 'Starting a deep search...';
-      }
-      return elapsedS > 12 ? `Still working on it... (${elapsedS}s)` : 'Searching the catalog...';
+      const steps = actionId === 'deep' ? DEEP_STEPS : FAST_STEPS;
+      // Advances once through the list, then HOLDS on the last step rather than looping back
+      // to the start -- cycling back to "Understanding your question..." after already
+      // showing "Putting together an answer..." would look like it had restarted from scratch.
+      const idx = Math.min(Math.floor(elapsedS / STEP_SECONDS), steps.length - 1);
+      const label = steps[idx];
+      return elapsedS > REASSURE_AFTER_S ? `${label} (${elapsedS}s)` : label;
     }
 
     // Renders whatever the backend returned: a plain answer, or an answer-so-far plus a
