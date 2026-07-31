@@ -534,14 +534,14 @@ export function buildRam() {
   }));
 
   // --- neck + head --------------------------------------------------------
-  const neck = new Node('neck', {
-    x: 0, y: -20, z: Z.ruff,
-    draw: (ctx) => {
-      // Collar ruff, hiding the head/torso seam.
-      fleeceBlob(ctx, 0, 2, 34, 16, 10, 0.18, 6);
-      fillStroke(ctx, PALETTE.wool, PALETTE.ink, LINE.thin);
-    },
-  });
+  // No collar ruff. It was a wool blob at the throat meant to hide the head/torso seam, but at
+  // this head size it sat directly under the muzzle and read as a patch stuck to the ram's
+  // chin. The hood behind the neck already covers the seam, so the ruff was only costing
+  // clarity on the face -- which is the part carrying all the character.
+  //
+  // The node itself stays: `neck` is an animation pivot that idle, walk, sleep, talk and sad
+  // all rotate. Deleting it would silently break every one of those poses.
+  const neck = new Node('neck', { x: 0, y: -20, z: Z.ruff });
   chest.add(neck);
   neck.add(buildHead());
 

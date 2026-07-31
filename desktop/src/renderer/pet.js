@@ -30,7 +30,18 @@ const wander = createWander({
   speed: 46,
   strideUnits: 44,
 });
-window.pet.onBounds((b) => wander.setBounds(b));
+window.pet.onBounds((b) => {
+  console.log(`[trace] bounds received: x ${b.minX}..${b.maxX}, y ${b.minY}..${b.maxY}`);
+  wander.setBounds(b);
+  // Start somewhere sensible inside the real screen. Without this the pet keeps whatever
+  // position it had inside wander's placeholder box, which sits in the top-left corner.
+  const p = wander.getPos();
+  if (p.x < b.minX || p.x > b.maxX || p.y < b.minY || p.y > b.maxY) {
+    wander.setPos((b.minX + b.maxX) / 2, (b.minY + b.maxY) * 0.6);
+  }
+});
+// Pull immediately; main's push at did-finish-load races this module's own load.
+window.pet.requestBounds();
 
 // After a drag, resync wander to where the window actually ended up. Without this it would
 // resume from its own stale position and the ram would teleport back on the next step.
@@ -110,20 +121,21 @@ setInterval(publishHitRect, 400);
 // and maddening bug in draggable widgets.
 const DRAG_THRESHOLD = 4;      // CSS px
 let press = null;
-let didDrag = false;
+let dragging = false;          // true ONLY between dragStart and mouseup
+let suppressClick = false;     // consumed by the click/dblclick that follows a drag
 
 canvas.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   press = { x: e.screenX, y: e.screenY };
-  didDrag = false;
+  suppressClick = false;       // a fresh press starts clean
   wander.wake();
   wander.halt();               // stop walking the instant it's grabbed
 });
 
 window.addEventListener('mousemove', (e) => {
-  if (!press || didDrag) return;
+  if (!press || dragging) return;
   if (Math.hypot(e.screenX - press.x, e.screenY - press.y) < DRAG_THRESHOLD) return;
-  didDrag = true;
+  dragging = true;
   window.pet.dragStart();
   document.body.style.cursor = 'grabbing';
 });
@@ -135,25 +147,38 @@ window.addEventListener('mouseup', () => {
   if (!press) return;
   press = null;
   document.body.style.cursor = '';
-  if (didDrag) window.pet.dragEnd();
+  if (!dragging) return;
+  // Two flags rather than one, and this is the whole reason: the frame loop needs to know
+  // the drag is OVER the instant the button is released, while the click that fires straight
+  // after still needs to know a drag just happened. A single flag cannot do both -- holding
+  // it set for the click left the loop permanently convinced a drag was in progress, so it
+  // stopped sending positions and the pet froze in place while still animating.
+  dragging = false;
+  suppressClick = true;
+  window.pet.dragEnd();
 });
 
 canvas.addEventListener('dblclick', (e) => {
   e.preventDefault();
-  if (didDrag) return;
+  if (suppressClick) return;
   wander.wake();
   wander.halt();
   window.pet.openSite();
 });
 
 canvas.addEventListener('click', () => {
-  if (didDrag) return;         // a drag is not a greeting
+  if (suppressClick) { suppressClick = false; return; }   // a drag is not a greeting
   wander.wake();
   wander.halt();
   mascot.celebrate();
 });
 
 // --- drive ----------------------------------------------------------------------
+// Throttled position trace. The overlay has no devtools, so without a log line there is no
+// way to tell "wander isn't producing movement" apart from "movement isn't reaching the
+// window" -- two very different bugs.
+const TRACE = !!window.pet.trace;
+let frameNo = 0;
 let last = performance.now();
 (function tick(now) {
   requestAnimationFrame(tick);
@@ -168,5 +193,10 @@ let last = performance.now();
   mascot.step(dt);
   // Skipped while dragging: main owns the window position then, and sending wander's stale
   // position would fight the cursor and make the ram judder.
-  if (!didDrag) window.pet.move({ x: s.x, y: s.y });
+  if (!dragging) window.pet.move({ x: s.x, y: s.y });
+
+  // Matches main's PET_TRACE gate; main forwards renderer console to stdout.
+  if (TRACE && (frameNo++ % 120) === 0) {
+    console.log(`[trace] base=${s.base} x=${s.x.toFixed(1)} y=${s.y.toFixed(1)} dragging=${dragging}`);
+  }
 })();

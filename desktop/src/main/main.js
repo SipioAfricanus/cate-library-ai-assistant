@@ -23,6 +23,8 @@ const SITE_URL = process.env.PET_SITE_URL || 'https://cate-library-ai-assistant.
 // window swallows mouse events, which would break the double-click. Escape hatch rather than
 // a guess: PET_FOCUSABLE=1 flips it.
 const PET_FOCUSABLE = process.env.PET_FOCUSABLE === '1';
+// PET_TRACE=1 turns on throttled position logging. Off by default so a normal run is quiet.
+const TRACE = process.env.PET_TRACE === '1';
 
 const PET_W = 200;
 const PET_H = 240;
@@ -209,17 +211,31 @@ function openSite() {
 
 ipcMain.on('pet:open-site', openSite);
 ipcMain.on('pet:hit-rect', (_e, rect) => { hitRect = rect; });
+ipcMain.on('pet:request-bounds', (e) => {
+  const b = travelBounds();
+  console.log(`[pet] roaming area: x ${b.minX}..${b.maxX}, y ${b.minY}..${b.maxY}`);
+  e.sender.send('pet:bounds', b);
+});
 
+let moveCount = 0;
 ipcMain.on('pet:move', (_e, pos) => {
   if (!petWin || petWin.isDestroyed()) return;
   // Wander must not fight the user's hand: while a drag is active the cursor owns the window.
   if (drag) return;
   const b = travelBounds();
-  petWin.setBounds({
+  const want = {
     x: Math.round(Math.min(b.maxX, Math.max(b.minX, pos.x))),
     y: Math.round(Math.min(b.maxY, Math.max(b.minY, pos.y))),
     width: PET_W, height: PET_H,
-  });
+  };
+  petWin.setBounds(want);
+  // Behind a flag: a normal run should be silent, but when the pet appears stuck this is the
+  // one line that separates "wander produced no movement" from "movement never reached the
+  // window" -- two different bugs that look identical from outside.
+  if (TRACE && (moveCount++ % 120) === 0) {
+    const got = petWin.getBounds();
+    console.log(`[move] asked x=${want.x} y=${want.y} -> got x=${got.x} y=${got.y}`);
+  }
 });
 
 ipcMain.on('pet:drag-start', () => {
