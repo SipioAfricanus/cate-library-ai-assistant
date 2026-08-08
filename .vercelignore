@@ -1,24 +1,16 @@
 # Keep the deploy to what actually runs in production: app.py, templates/, static/.
 #
-# This exists because local development now creates several large directories that have
-# no business being uploaded. Without it a deploy ships ~400MB of dependencies:
-#   desktop/     289MB - Electron binary for the desktop-pet spike
-#   venv/         69MB - local Python virtualenv (Vercel installs from requirements.txt)
-#   node_modules/ 42MB - three.js + esbuild, only used to build the mascot bundle locally
-#
-# Note the mascot bundle itself IS deployed when present, because it lives in
-# static/vendor/ and is committed as a build artifact -- Vercel runs no Node build step.
+# Local development creates several large directories that have no business being uploaded.
+# Without these three, a deploy ships ~350MB of unrelated dependencies:
+#   desktop/      the Electron desktop-pet app (its own node_modules + packaged builds)
+#   venv/         local Python virtualenv -- Vercel installs from requirements.txt instead
+#   node_modules/ root-level, if present -- matches at any depth, same reasoning as desktop/'s
 node_modules/
 desktop/
 venv/
 
-# The 2D mascot DOES deploy -- it lives under static/ and is served directly as ES modules
-# with no build step. Only its dev harness is excluded.
-#
-# Note the leading slash matters nowhere here anymore, but it did: an unanchored `mascot/`
-# entry (which is what this file used to carry, from when the 3D module lived at the repo
-# root) matches a directory of that name at ANY depth, so it would silently exclude
-# static/mascot/ and ship a site whose mascot 404s.
+# The mascot itself DOES deploy: it lives at static/mascot/, has zero dependencies, and is
+# served directly as ES modules with no build step. Only its dev-only harness is excluded.
 static/mascot/dev/
 
 # Local tooling and scratch

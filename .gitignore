@@ -6,8 +6,12 @@ server.log
 *.pyc
 .vercel
 .env*
+# ...except the template, which has no secrets and is meant to be committed. Without this
+# exception .env* silently swallows it too, and `cp .env.example .env` stops working for
+# the next person who clones the repo.
+!.env.example
 
-# Node deps arrived with the mascot build tooling (three.js, esbuild) and the Electron
-# desktop-pet spike. The pattern matches at any depth, so it covers desktop/node_modules
-# too -- which holds a ~290MB Electron binary that must never reach the repo.
+# Node deps: Electron itself (desktop/node_modules -- a full Chromium + Node runtime, ~290MB)
+# and electron-builder, used to package the desktop pet. The pattern matches at any depth, so
+# one line covers node_modules wherever it appears.
 node_modules/
