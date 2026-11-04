@@ -613,12 +613,55 @@
       return elapsedS > REASSURE_AFTER_S ? `${label} (${elapsedS}s)` : label;
     }
 
+    // Recovers the answer text for a pause that arrived without it.
+    //
+    // Dify can emit human_input_required BEFORE the Answer node's text reaches the SSE
+    // stream, and _stream_chat_events returns on that event -- so the frames carrying the
+    // text are never read and `answer` arrives empty. The text is not lost: it's already
+    // persisted on the message, which is why it reappears once /poll-human-input runs.
+    // Fetch it here so it can be shown ABOVE the question. Without this the purchase
+    // prompt ("would you like the library to purchase these recommended books?") renders
+    // with nothing above it, asking the student to approve books they were never shown.
+    //
+    // First attempt is immediate -- the message is usually already persisted, so the common
+    // case costs one round trip rather than a full interval.
+    async function fetchPendingAnswer(data, attempts = 3, intervalMs = 700) {
+      for (let i = 0; i < attempts; i++) {
+        if (i > 0) await new Promise((r) => setTimeout(r, intervalMs));
+        let res, payload;
+        try {
+          res = await fetch('/poll-human-input', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message_id: data.message_id,
+              conversation_id: data.conversation_id || conversationId,
+              prior_answer: '',
+              visitor_id: visitorId,
+            }),
+          });
+          if (!res.ok) continue;
+          payload = await res.json();
+        } catch (err) {
+          continue; // transient hiccup mid-backfill; try again
+        }
+        if (payload.answer) return payload.answer;
+      }
+      return ''; // give up quietly -- the question still renders, just without context
+    }
+
     // Renders whatever the backend returned: a plain answer, or an answer-so-far plus a
     // question + action buttons when Dify has paused on a Human Input node.
-    function renderResponse(data) {
+    async function renderResponse(data) {
       conversationId = data.conversation_id || conversationId;
       if (data.requires_action) {
-        if (data.answer) addMessage(data.answer, 'bot');
+        // Only the purchase confirmation needs the backfill: the mode picker fires before
+        // any searching, so it legitimately has no answer text to show.
+        let answerText = data.answer;
+        if (!answerText && data.form_kind === 'confirm') {
+          answerText = await fetchPendingAnswer(data);
+        }
+        if (answerText) addMessage(answerText, 'bot');
 
         // Always answer the search-mode prompt from the panel setting, skipping both the
         // question bubble and the buttons. The chosen mode still shows up in the wait copy
@@ -634,13 +677,13 @@
         const modePref = getModePref();
         const offered = (data.actions || []).some((a) => a.id === modePref);
         if (data.form_kind === 'mode' && offered) {
-          submitHumanInput(data.form_token, modePref, data.message_id, data.answer || '', 'mode');
+          submitHumanInput(data.form_token, modePref, data.message_id, answerText || '', 'mode');
           return;
         }
 
         addMessage(data.question || 'Please choose an option:', 'bot');
         renderActionButtons(
-          data.actions || [], data.form_token, data.message_id, data.answer || '', data.form_kind
+          data.actions || [], data.form_token, data.message_id, answerText || '', data.form_kind
         );
         // Only the purchase confirmation means "couldn't find it as asked". The mode picker
         // now pauses before ANY searching, on every single question, so reacting sadly to
@@ -702,7 +745,7 @@
               typingEl.textContent = parsed.data.message;
             } else if (parsed.eventType === 'done') {
               typingEl.remove();
-              renderResponse(parsed.data);
+              await renderResponse(parsed.data);
             } else if (parsed.eventType === 'error') {
               typingEl.remove();
               addMessage(parsed.data.error || 'Something went wrong.', 'error');
@@ -770,7 +813,7 @@
         }
         if (data.ready) {
           typingEl.remove();
-          renderResponse(data);
+          await renderResponse(data);
           return;
         }
       }
@@ -809,7 +852,7 @@
           await pollHumanInputResult(data, typingEl, formKind, actionId);
         } else {
           typingEl.remove();
-          renderResponse(data);
+          await renderResponse(data);
         }
       } catch (err) {
         typingEl.remove();
